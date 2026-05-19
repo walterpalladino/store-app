@@ -49,6 +49,7 @@ const API = {
     list:       `${P}/products`,
     search:     `${P}/products/search`,
     byId:       (id)   => `${P}/products/${id}`,
+    add:        `${P}/products/add`,
     byCategory: (slug) => `${P}/products/category/${encodeURIComponent(slug)}`,
     categories: `${P}/products/categories`,
   },
