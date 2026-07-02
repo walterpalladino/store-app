@@ -59,6 +59,12 @@ describe('API config', () => {
     })
   })
 
+  // ── Payments ─────────────────────────────────────────────────────────────────
+  describe('payments endpoints', () => {
+    it('builds createSession URL', () => expect(API.payments.createSession).toBe('http://localhost:3000/api/payments/checkout-session'))
+    it('builds session URL',       () => expect(API.payments.session('cs_1')).toBe('http://localhost:3000/api/payments/session/cs_1'))
+  })
+
   // ── Orders ───────────────────────────────────────────────────────────────────
   describe('orders endpoints', () => {
     it('builds list URL',   () => expect(API.orders.list).toBe('http://localhost:3000/api/orders'))

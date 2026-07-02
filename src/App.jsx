@@ -13,6 +13,8 @@ import LoginPage                from './pages/LoginPage'
 import CartPage                 from './pages/CartPage'
 import CheckoutPage             from './pages/CheckoutPage'
 import UserPage                 from './pages/user/UserPage'
+import PaymentPage              from './pages/PaymentPage'
+import PaymentReturnPage        from './pages/PaymentReturnPage'
 import AdminLoginPage           from './pages/admin/AdminLoginPage'
 import AdminPage                from './pages/admin/AdminPage'
 
@@ -51,6 +53,10 @@ function App() {
                     </AdminProtectedRoute>
                   }
                 />
+
+                {/* ── Payment step (focused, no customer Navbar) ── */}
+                <Route path="/checkout/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
+                <Route path="/checkout/return"  element={<ProtectedRoute><PaymentReturnPage /></ProtectedRoute>} />
 
                 {/* ── Customer section (standalone login) ── */}
                 <Route path="/login" element={<LoginPage />} />

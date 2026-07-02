@@ -51,6 +51,13 @@ const API = {
     byId:     (id) => `${BASE}/api/orders/${id}`,
     create:   `${BASE}/api/orders`,
   },
+
+  // Stripe payments — backend-owned (pending). POST creates a Checkout Session /
+  // PaymentIntent; GET returns the settled status for the return page.
+  payments: {
+    createSession: `${BASE}/api/payments/checkout-session`,
+    session:       (id) => `${BASE}/api/payments/session/${id}`,
+  },
 }
 
 export default API
