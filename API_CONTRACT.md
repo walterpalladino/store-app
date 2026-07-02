@@ -41,6 +41,7 @@ Errors return a **flat** object with a single `message` field (read it as
 | ------ | -------------------------------------------------- |
 | 400    | Bad request (invalid domain input)                 |
 | 401    | Missing/invalid Bearer token                       |
+| 403    | Authenticated but lacking the required role (ADMIN)|
 | 404    | Resource not found                                 |
 | 409    | Conflict (duplicate username, email, sku, …)       |
 | 422    | Validation failed (missing/invalid body fields)    |
@@ -66,6 +67,10 @@ Authorization: Bearer <accessToken>
 
 Obtain the token pair from `POST /api/auth/login`. Endpoints marked 🔒 below require it.
 
+Endpoints marked **🔒 ADMIN** additionally require the authenticated user to have the
+`ADMIN` role. A valid token belonging to a non-admin user returns **403**; a missing or
+invalid token returns **401**.
+
 ---
 
 ## Endpoint index
@@ -80,16 +85,20 @@ Obtain the token pair from `POST /api/auth/login`. Endpoints marked 🔒 below r
 | Users    | POST   | `/api/users`                           | —    |
 | Users    | PATCH  | `/api/users/:id`                       | 🔒   |
 | Products | GET    | `/api/products`                        | —    |
-| Products | POST   | `/api/products`                        | —    |
+| Products | POST   | `/api/products`                        | 🔒 ADMIN |
 | Products | GET    | `/api/products/search`                 | —    |
 | Products | GET    | `/api/products/categories`             | —    |
 | Products | GET    | `/api/products/category-list`          | —    |
+| Products | POST   | `/api/products/categories`             | 🔒 ADMIN |
+| Products | PUT    | `/api/products/categories/:slug`       | 🔒 ADMIN |
+| Products | PATCH  | `/api/products/categories/:slug`       | 🔒 ADMIN |
+| Products | DELETE | `/api/products/categories/:slug`       | 🔒 ADMIN |
 | Products | GET    | `/api/products/category/:category`     | —    |
 | Products | GET    | `/api/products/sku/:sku`               | —    |
 | Products | GET    | `/api/products/:id`                    | —    |
-| Products | PUT    | `/api/products/:id`                    | —    |
-| Products | PATCH  | `/api/products/:id`                    | —    |
-| Products | DELETE | `/api/products/:id`                    | —    |
+| Products | PUT    | `/api/products/:id`                    | 🔒 ADMIN |
+| Products | PATCH  | `/api/products/:id`                    | 🔒 ADMIN |
+| Products | DELETE | `/api/products/:id`                    | 🔒 ADMIN |
 | Reviews  | GET    | `/api/products/:id/reviews`            | —    |
 | Reviews  | GET    | `/api/products/:id/reviews/:reviewId`  | —    |
 | Reviews  | POST   | `/api/products/:id/reviews`            | —    |
@@ -411,12 +420,13 @@ curl "http://localhost:3000/api/products?limit=10&skip=0"
 
 ---
 
-### POST `/api/products`
+### POST `/api/products` 🔒 ADMIN
 
-Create a product.
+Create a product. Requires an authenticated ADMIN.
 
 ```bash
 curl -X POST http://localhost:3000/api/products \
+  -H "Authorization: Bearer <accessToken>" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "BMW Pencil",
@@ -436,6 +446,8 @@ curl -X POST http://localhost:3000/api/products \
 
 **201** → success envelope wrapping the full product object.
 
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
 **409** — duplicate SKU → `{ "message": "..." }`
 **422** — missing required fields
 
@@ -484,6 +496,81 @@ curl http://localhost:3000/api/products/category-list
 
 ---
 
+### POST `/api/products/categories` 🔒 ADMIN
+
+Create a category. Requires an authenticated ADMIN.
+
+```bash
+curl -X POST http://localhost:3000/api/products/categories \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "slug": "home-decoration", "name": "Home Decoration" }'
+```
+
+**Required:** `slug`. `name` is optional — when omitted it is derived from the slug
+(`home-decoration` → `Home Decoration`). The slug is normalized to lowercase/trimmed.
+
+**201**
+
+```json
+{ "success": true, "data": { "slug": "home-decoration", "name": "Home Decoration" } }
+```
+
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
+**409** — a category with that slug already exists
+**422** — `slug` missing
+
+---
+
+### PUT / PATCH `/api/products/categories/:slug` 🔒 ADMIN
+
+Update a category. `PUT` and `PATCH` behave identically (partial update). May change the
+`name` and/or rename the `slug`. Requires an authenticated ADMIN.
+
+```bash
+curl -X PATCH http://localhost:3000/api/products/categories/home-decoration \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Home & Decoration" }'
+```
+
+**200**
+
+```json
+{ "success": true, "data": { "slug": "home-decoration", "name": "Home & Decoration" } }
+```
+
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
+**404** — category not found
+**409** — renaming to a slug that already exists
+
+---
+
+### DELETE `/api/products/categories/:slug` 🔒 ADMIN
+
+Delete a category. Requires an authenticated ADMIN. A category still referenced by one or
+more products cannot be deleted.
+
+```bash
+curl -X DELETE http://localhost:3000/api/products/categories/home-decoration \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+**200**
+
+```json
+{ "success": true, "data": { "slug": "home-decoration", "name": "Home Decoration" } }
+```
+
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
+**404** — category not found
+**409** — the category is still in use by one or more products
+
+---
+
 ### GET `/api/products/category/:category`
 
 List products in a category (paginated, same shape as `GET /api/products`).
@@ -518,28 +605,33 @@ curl http://localhost:3000/api/products/1
 
 ---
 
-### PUT / PATCH `/api/products/:id`
+### PUT / PATCH `/api/products/:id` 🔒 ADMIN
 
 Update a product. `PUT` and `PATCH` behave identically (partial update — send only
-the fields to change).
+the fields to change). Requires an authenticated ADMIN.
 
 ```bash
 curl -X PATCH http://localhost:3000/api/products/1 \
+  -H "Authorization: Bearer <accessToken>" \
   -H "Content-Type: application/json" \
   -d '{ "price": 5.49, "stock": 80 }'
 ```
 
 **200** → success envelope wrapping the updated product object.
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
 **404** — not found
 
 ---
 
-### DELETE `/api/products/:id`
+### DELETE `/api/products/:id` 🔒 ADMIN
 
-Soft-delete a product. Returns the deleted product (`isDeleted: true`).
+Soft-delete a product. Returns the deleted product (`isDeleted: true`). Requires an
+authenticated ADMIN.
 
 ```bash
-curl -X DELETE http://localhost:3000/api/products/1
+curl -X DELETE http://localhost:3000/api/products/1 \
+  -H "Authorization: Bearer <accessToken>"
 ```
 
 **200**
@@ -550,6 +642,10 @@ curl -X DELETE http://localhost:3000/api/products/1
   "data": { "id": 1, "title": "BMW Pencil", "isDeleted": true, "deletedOn": "2026-07-01T12:00:00.000Z" }
 }
 ```
+
+**401** — missing/invalid token
+**403** — authenticated but not an ADMIN
+**404** — not found
 
 ---
 
@@ -805,6 +901,8 @@ curl -X POST http://localhost:3000/api/orders \
 - Read errors as `response.data.message` (flat), success payloads as `response.data.data`.
 - Store `accessToken` and `refreshToken` from login; send `Authorization: Bearer <accessToken>`
   on 🔒 endpoints; call `POST /api/auth/refresh` when the access token expires.
+- **🔒 ADMIN** endpoints (product and category create/update/delete) require the token's user
+  to have the `ADMIN` role — non-admins get **403**, missing/invalid tokens get **401**.
 - Carts are keyed by **user id**, not a separate cart id — use the logged-in user's id.
 - CORS allows `GET, POST, PUT, PATCH, DELETE, OPTIONS`. Rate limiting is active; on
   **429** back off using the `error.message` retry hint.

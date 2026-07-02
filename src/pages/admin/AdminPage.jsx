@@ -9,11 +9,12 @@ import {
 import {
   StorefrontOutlined, InventoryOutlined, PointOfSaleOutlined,
   LogoutRounded, ChevronRight, MenuRounded, Close,
-  HomeOutlined, KeyRounded, KeyboardArrowDownRounded,
+  HomeOutlined, KeyRounded, KeyboardArrowDownRounded, CategoryOutlined,
 } from '@mui/icons-material'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import MerchantSettings from './MerchantSettings'
 import AdminProducts   from './AdminProducts'
+import AdminCategories from './AdminCategories'
 import AdminSells      from './AdminSells'
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,12 @@ const NAV_ITEMS = [
     label:     'Products',
     icon:      <InventoryOutlined sx={{ fontSize: 19 }} />,
     component: AdminProducts,
+  },
+  {
+    id:        'categories',
+    label:     'Categories',
+    icon:      <CategoryOutlined sx={{ fontSize: 19 }} />,
+    component: AdminCategories,
   },
   {
     id:        'sells',

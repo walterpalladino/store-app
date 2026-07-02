@@ -36,7 +36,8 @@ const API = {
     byId:         (id)   => `${BASE}/api/products/${id}`,
     add:          `${BASE}/api/products`,
     byCategory:   (slug) => `${BASE}/api/products/category/${encodeURIComponent(slug)}`,
-    categories:   `${BASE}/api/products/categories`,
+    categories:   `${BASE}/api/products/categories`,                                        // GET list · POST create (ADMIN)
+    categoryBySlug: (slug) => `${BASE}/api/products/categories/${encodeURIComponent(slug)}`, // PUT/PATCH/DELETE (ADMIN)
     categoryList: `${BASE}/api/products/category-list`,
   },
 

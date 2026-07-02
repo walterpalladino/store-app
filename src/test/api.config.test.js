@@ -40,6 +40,8 @@ describe('API config', () => {
     it('builds add URL',          () => expect(API.products.add).toBe('http://localhost:3000/api/products'))
     it('builds byId URL',         () => expect(API.products.byId(7)).toBe('http://localhost:3000/api/products/7'))
     it('builds categories URL',   () => expect(API.products.categories).toBe('http://localhost:3000/api/products/categories'))
+    it('builds categoryBySlug URL', () => expect(API.products.categoryBySlug('home-decoration')).toBe('http://localhost:3000/api/products/categories/home-decoration'))
+    it('encodes special chars in categoryBySlug', () => expect(API.products.categoryBySlug('a b')).toContain('a%20b'))
     it('builds categoryList URL', () => expect(API.products.categoryList).toBe('http://localhost:3000/api/products/category-list'))
 
     it('encodes special chars in category slug', () => {
