@@ -460,7 +460,7 @@ function TransactionDetail({ txId, onBack }) {
                           )}
                         </TableCell>
                         <TableCell align="right" sx={{ py: 2, px: { xs: 1.5, md: 2.5 }, whiteSpace: 'nowrap' }}>
-                          <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1rem', fontWeight: 500 }}>{fmt(p.discountedTotal)}</Typography>
+                          <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1rem', fontWeight: 500 }}>{fmt(p.discountedTotal ?? p.total ?? (p.price ?? 0) * (p.quantity ?? 0))}</Typography>
                           {p.discountPercentage > 0 && (
                             <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', textDecoration: 'line-through' }}>{fmt(p.total)}</Typography>
                           )}

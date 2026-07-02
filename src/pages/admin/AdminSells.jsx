@@ -44,6 +44,11 @@ function getStatus(s) {
 
 const fmt = (n) => Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
 
+// Order line-items may arrive in the lean API shape ({ productId, quantity, price })
+// or the richer legacy/demo shape ({ id, title, discountedTotal, discountPercentage }).
+const pid     = (p) => p.productId ?? p.id
+const lineRev = (p) => p.discountedTotal ?? p.total ?? (p.price ?? 0) * (p.quantity ?? 0)
+
 function mockDate(id) {
   const d = new Date('2024-01-15')
   d.setDate(d.getDate() + (id - 1) * 23)
@@ -213,10 +218,10 @@ export default function AdminSells() {
                           <TableCell sx={{ py: 1.75, px: 2 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                               {tx.products.slice(0, 3).map((p) => (
-                                <Tooltip key={p.id} title={`${p.title} × ${p.quantity}`} arrow>
+                                <Tooltip key={pid(p)} title={`${p.title ?? `#${pid(p)}`} × ${p.quantity}`} arrow>
                                   <Box sx={{ width: 28, height: 28, borderRadius: 0.75, bgcolor: '#f0ece3', border: '1px solid rgba(26,26,26,0.07)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 0.25, flexShrink: 0 }}>
-                                    {thumbnails[p.id]
-                                      ? <Box component="img" src={thumbnails[p.id]} alt={p.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                    {thumbnails[pid(p)]
+                                      ? <Box component="img" src={thumbnails[pid(p)]} alt={p.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                                       : <ShoppingBagOutlined sx={{ fontSize: 14, color: 'rgba(26,26,26,0.2)' }} />
                                     }
                                   </Box>
@@ -276,18 +281,19 @@ export default function AdminSells() {
                   <TableBody>
                     {Object.values(
                       transactions.flatMap((tx) => tx.products).reduce((acc, p) => {
-                        if (!acc[p.id]) acc[p.id] = { ...p, _qty: 0, _rev: 0 }
-                        acc[p.id]._qty += p.quantity
-                        acc[p.id]._rev += p.discountedTotal
+                        const key = pid(p)
+                        if (!acc[key]) acc[key] = { ...p, _qty: 0, _rev: 0 }
+                        acc[key]._qty += p.quantity ?? 0
+                        acc[key]._rev += lineRev(p)
                         return acc
                       }, {})
                     ).sort((a, b) => b._rev - a._rev).map((p, idx) => (
-                      <TableRow key={p.id} sx={{ bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)', '&:last-child td': { border: 0 } }}>
+                      <TableRow key={pid(p)} sx={{ bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)', '&:last-child td': { border: 0 } }}>
                         <TableCell sx={{ py: 1.75, px: 2 }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                             <Box sx={{ width: 32, height: 32, bgcolor: '#f0ece3', borderRadius: 0.75, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 0.25, border: '1px solid rgba(26,26,26,0.07)', flexShrink: 0 }}>
-                              {thumbnails[p.id]
-                                ? <Box component="img" src={thumbnails[p.id]} alt={p.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                              {thumbnails[pid(p)]
+                                ? <Box component="img" src={thumbnails[pid(p)]} alt={p.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                                 : <ShoppingBagOutlined sx={{ fontSize: 14, color: 'rgba(26,26,26,0.2)' }} />
                               }
                             </Box>
@@ -304,7 +310,9 @@ export default function AdminSells() {
                           <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1rem', fontWeight: 500 }}>{fmt(p._rev)}</Typography>
                         </TableCell>
                         <TableCell sx={{ py: 1.75, px: 2 }}>
-                          <Chip label={`-${p.discountPercentage.toFixed(1)}%`} size="small" sx={{ height: 18, fontSize: '0.6rem', bgcolor: 'rgba(200,169,110,0.1)', color: 'secondary.dark', fontWeight: 500 }} />
+                          {p.discountPercentage > 0
+                            ? <Chip label={`-${p.discountPercentage.toFixed(1)}%`} size="small" sx={{ height: 18, fontSize: '0.6rem', bgcolor: 'rgba(200,169,110,0.1)', color: 'secondary.dark', fontWeight: 500 }} />
+                            : <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>—</Typography>}
                         </TableCell>
                       </TableRow>
                     ))}
