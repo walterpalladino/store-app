@@ -184,6 +184,9 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
     if (isNew)          setForm({ ...EMPTY_FORM })
     else if (product)   setForm(formFromProduct(product))
     setErrors({}); setApiError('')
+    // Intentionally keyed on product identity — reset only when a *different*
+    // product is opened, not on every re-render that yields a new object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id, isNew])
 
   const handleChange = (e) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import { AuthProvider, useAuth } from '../context/AuthContext'
 import { MemoryRouter } from 'react-router-dom'
 import { makeUser, okEnvelope, errEnvelope, mockJsonResponse } from './helpers.jsx'
@@ -27,14 +27,6 @@ function makeLoginResponse(overrides = {}) {
 // ── wrapper ────────────────────────────────────────────────────────────────
 function wrapper({ children }) {
   return <MemoryRouter><AuthProvider>{children}</AuthProvider></MemoryRouter>
-}
-
-// ── fetch mock helpers ─────────────────────────────────────────────────────
-function mockFetchOnce(body, status = 200) {
-  global.fetch = vi.fn().mockResolvedValueOnce(mockJsonResponse(okEnvelope(body), status))
-}
-function mockFetchErr(message, status = 422) {
-  global.fetch = vi.fn().mockResolvedValueOnce(mockJsonResponse(errEnvelope(message), status))
 }
 
 beforeEach(() => { window.localStorage.clear(); vi.restoreAllMocks() })
@@ -317,9 +309,6 @@ describe('AuthContext — authFetch', () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(new Response('{}', { status: 401 }))
       .mockResolvedValueOnce(mockJsonResponse(errEnvelope('Token expired'), 401))
-
-    // Spy on the internal logout to confirm it is called
-    const logoutSpy = vi.spyOn(result.current, 'logout')
 
     try {
       await act(async () => { await result.current.authFetch('http://test/api/me') })

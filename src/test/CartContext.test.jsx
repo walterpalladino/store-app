@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react'
 import { CartProvider, useCart } from '../context/CartContext'
 import { AuthProvider } from '../context/AuthContext'
 import { MemoryRouter } from 'react-router-dom'
-import { makeProduct, makeUser, okEnvelope, mockJsonResponse } from './helpers.jsx'
+import { makeProduct, makeUser } from './helpers.jsx'
 import cartServiceSingleton from '../services/cartService'
 
 // ── JWT helper ─────────────────────────────────────────────────────────────
@@ -13,10 +13,6 @@ function makeJWT(payload) {
   return `${h}.${b}.sig`
 }
 const TOKEN = makeJWT({ sub: '1', exp: Math.floor(Date.now() / 1000) + 3600 })
-
-function makeLoginData(user) {
-  return { ...user, accessToken: TOKEN, refreshToken: TOKEN }
-}
 
 // ── wrapper that allows an optional pre-login ──────────────────────────────
 function makeWrapper(loggedIn = false) {

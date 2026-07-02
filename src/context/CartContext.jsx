@@ -5,7 +5,7 @@ import cartService from '../services/cartService'
 const CartContext = createContext(null)
 
 export function CartProvider({ children }) {
-  const { user, isLoggedIn } = useAuth()
+  const { user } = useAuth()
   const userId = user?.id ?? null
 
   // Local state mirrors the service so React re-renders on every change

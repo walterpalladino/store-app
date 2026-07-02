@@ -53,11 +53,7 @@ describe('ProtectedRoute', () => {
   it('preserves the intended path in location.state.from', () => {
     useAuth.mockReturnValue({ isLoggedIn: false })
 
-    let capturedState = null
-
     function LoginCapture() {
-      const { useLocation } = require('react-router-dom')
-      capturedState = useLocation().state
       return <div>Login</div>
     }
 
@@ -129,7 +125,7 @@ describe('AdminProtectedRoute', () => {
     useMerchantAuth.mockReturnValue({ isLoggedIn: false, isAdmin: false })
     useAuth.mockReturnValue({ isLoggedIn: false })
 
-    const { container } = render(
+    render(
       <MemoryRouter initialEntries={['/admin/products']}>
         <Routes>
           <Route path="/admin/products" element={<AdminProtectedRoute><div>Products</div></AdminProtectedRoute>} />

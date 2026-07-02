@@ -276,7 +276,7 @@ function TransactionDetail({ txId, onBack }) {
   const [thumbnails, setThumbnails] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
-  const [usingFallback, setUsingFallback] = useState(false)
+  const [, setUsingFallback]  = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)

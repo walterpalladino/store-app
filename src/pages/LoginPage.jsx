@@ -294,7 +294,7 @@ function RegisterSuccess({ user, onGoToLogin }) {
           Your account has been registered. Please sign in to continue.
         </Typography>
         <Alert severity="info" sx={{ textAlign: 'left', fontSize: '0.75rem', mb: 3 }}>
-          This is a mock API — your account won't persist. Use the demo credentials on the sign-in tab.
+          This is a mock API — your account won’t persist. Use the demo credentials on the sign-in tab.
         </Alert>
         <Button variant="contained" fullWidth onClick={onGoToLogin} sx={{ py: 1.4, fontSize: '0.72rem', letterSpacing: '0.1em' }}>
           Go to Sign In

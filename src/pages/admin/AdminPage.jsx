@@ -215,7 +215,7 @@ function SidebarContent({ activeId, onSelect, user, onLogout, onGoToStore }) {
 // AdminPage
 // ---------------------------------------------------------------------------
 export default function AdminPage() {
-  const { user, isLoggedIn, logout, accessToken, tokenPayload } = useMerchantAuth()
+  const { user, isLoggedIn, logout, tokenPayload } = useMerchantAuth()
   const navigate   = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const theme      = useTheme()

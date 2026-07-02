@@ -43,7 +43,7 @@ function Section({ title, subtitle, children }) {
 }
 
 export default function MerchantSettings() {
-  const { user, updateMerchant, merchantFetch } = useMerchantAuth()
+  const { user, updateMerchant } = useMerchantAuth()
   const [editing, setEditing] = useState(false)
   const [saving,  setSaving]  = useState(false)
   const [saved,   setSaved]   = useState(false)

@@ -6,7 +6,7 @@ const WishlistContext = createContext(null)
 const storageKey = (userId) => `shop_wishlist_${userId}`
 
 export function WishlistProvider({ children }) {
-  const { user, isLoggedIn } = useAuth()
+  const { user } = useAuth()
   const userId = user?.id ?? null
 
   // Each item: { id, title, price, discountPercentage, thumbnail, category }

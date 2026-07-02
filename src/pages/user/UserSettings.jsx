@@ -65,7 +65,6 @@ function Section({ title, subtitle, children }) {
 // Profile section
 // ---------------------------------------------------------------------------
 function ProfileSection({ user }) {
-  const { login } = useAuth()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { submitOrder } from '../services/checkoutService'
-import { okEnvelope, errEnvelope, makeProduct, makeTransaction } from './helpers.jsx'
+import { okEnvelope, errEnvelope, makeTransaction } from './helpers.jsx'
 
 const makePayload = (overrides = {}) => ({
   userId:          1,

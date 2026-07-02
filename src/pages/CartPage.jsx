@@ -15,7 +15,6 @@ import {
   ReceiptLongOutlined, ScienceOutlined,
 } from '@mui/icons-material'
 import { useCart } from '../context/CartContext'
-import { useAuth } from '../context/AuthContext'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -340,7 +339,7 @@ function EmptyCart({ onLoadTestData, testLoading }) {
           Your bag is empty
         </Typography>
         <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4, maxWidth: 320, mx: 'auto' }}>
-          Looks like you haven't added anything yet. Explore our collection to find something you'll love.
+          Looks like you haven’t added anything yet. Explore our collection to find something you’ll love.
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, justifyContent: 'center' }}>
           <Button
@@ -559,7 +558,6 @@ function OrderSummary({ subtotal, itemCount, productCount }) {
 // ---------------------------------------------------------------------------
 export default function CartPage() {
   const navigate = useNavigate()
-  const { user } = useAuth()
   const { items, totalQuantity, subtotal, addItem, setQuantity, removeItem, clearCart } = useCart()
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))

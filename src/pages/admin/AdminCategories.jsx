@@ -56,6 +56,9 @@ function CategoryFormDrawer({ category, isNew, onClose, onSaved, merchantFetch }
     if (isNew) setForm({ ...EMPTY_FORM })
     else if (category) setForm({ slug: category.slug ?? '', name: category.name ?? '' })
     setSlugEdited(false); setErrors({}); setApiError('')
+    // Intentionally keyed on the category slug — reset only when a *different*
+    // category is opened, not on every re-render that yields a new object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category?.slug, isNew])
 
   const handleNameChange = (e) => {

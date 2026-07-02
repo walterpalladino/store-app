@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Container, Grid, Box, Typography, Pagination, Skeleton,
@@ -59,16 +59,17 @@ export default function HomePage() {
     [searchParams, setSearchParams]
   )
 
+  const [minPrice, maxPrice] = priceRange
   const filters = useMemo(
     () => ({
       category: selectedCategory,
       search: searchQuery,
-      minPrice: priceRange[0],
-      maxPrice: priceRange[1],
+      minPrice,
+      maxPrice,
       page: currentPage,
       limit: PRODUCTS_PER_PAGE,
     }),
-    [selectedCategory, searchQuery, priceRange[0], priceRange[1], currentPage]
+    [selectedCategory, searchQuery, minPrice, maxPrice, currentPage]
   )
 
   const { products, total, loading, error } = useProducts(filters)

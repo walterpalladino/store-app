@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { useProducts, useCategories, useProduct } from '../hooks/useProducts'
 import { okEnvelope, errEnvelope, makeProduct } from './helpers.jsx'
