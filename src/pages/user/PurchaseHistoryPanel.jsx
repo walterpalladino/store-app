@@ -74,13 +74,17 @@ function statusMeta(tx) {
   return              { label: 'Delivered',   color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    }
 }
 
-// Safe fetch — returns { data, error } never throws
-async function safeFetch(url) {
+// Safe fetch — unwraps { success, data } envelope, returns { data, error }, never throws
+async function safeFetch(url, options = {}) {
   try {
-    const res = await fetch(url)
-    if (!res.ok) return { data: null, error: `HTTP ${res.status}` }
-    const data = await res.json()
-    return { data, error: null }
+    const res  = await fetch(url, options)
+    const body = await res.json()
+    // Handle new envelope: { success, data } or { success, error }
+    if (body.success === false) {
+      return { data: null, error: body.error?.message || `HTTP ${res.status}` }
+    }
+    // success:true — data is in body.data
+    return { data: body.data ?? body, error: null }
   } catch (err) {
     return { data: null, error: err.message || 'Network error' }
   }
@@ -279,9 +283,11 @@ function TransactionDetail({ txId, onBack }) {
     setError('')
     setUsingFallback(false)
 
-    const { data, error: fetchErr } = await safeFetch(API.transactions.detail)
+    // GET /api/orders/:id — { success, data: { id, products, ... } }
+    const { data, error: fetchErr } = await safeFetch(API.orders.byId(txId))
 
-    const txData = data ?? (FALLBACK_TRANSACTIONS.find((t) => t.id === txId) ?? FALLBACK_TRANSACTIONS[0])
+    const txData = (data && typeof data === 'object' && !Array.isArray(data) ? data : null)
+      ?? (FALLBACK_TRANSACTIONS.find((t) => t.id === txId) ?? FALLBACK_TRANSACTIONS[0])
     if (!data) {
       setUsingFallback(true)
       if (fetchErr) setError(`Live API unavailable (${fetchErr}) — showing cached data.`)
@@ -290,7 +296,7 @@ function TransactionDetail({ txId, onBack }) {
     setLoading(false)
 
     // Fetch thumbnails for each product in the detail view
-    const ids = txData.products.map((p) => p.id)
+    const ids = txData.products.map((p) => p.productId ?? p.id)
     const results = await Promise.all(
       ids.map((id) =>
         safeFetch(API.products.byId(id))
@@ -505,11 +511,11 @@ export function PurchaseHistoryPanel() {
 
   // Fetch thumbnails for all unique product ids across all transactions
   const loadThumbnails = useCallback(async (txList) => {
-    const ids = [...new Set(txList.flatMap((tx) => tx.products.map((p) => p.id)))]
+    const ids = [...new Set(txList.flatMap((tx) => tx.products.map((p) => p.productId ?? p.id)))]
     const results = await Promise.all(
       ids.map((id) =>
         safeFetch(API.products.byId(id))
-          .then(({ data }) => data ? [id, data.thumbnail] : null)
+          .then(({ data: pd }) => pd?.thumbnail ? [id, pd.thumbnail] : null)
       )
     )
     const map = {}
@@ -522,15 +528,18 @@ export function PurchaseHistoryPanel() {
     setError('')
     setUsingFallback(false)
 
-    const { data, error: fetchErr } = await safeFetch(API.transactions.list)
+    const { data, error: fetchErr } = await safeFetch(API.orders.list)
 
     let list
     if (data) {
-      list = Array.isArray(data.transactions)
-        ? data.transactions
-        : Array.isArray(data)
-          ? data
-          : [data]
+      // Response: { success, data: { orders: [...] } }
+      list = Array.isArray(data.orders)
+        ? data.orders
+        : Array.isArray(data.transactions)
+          ? data.transactions
+          : Array.isArray(data)
+            ? data
+            : [data]
       setTransactions(list)
     } else {
       list = FALLBACK_TRANSACTIONS

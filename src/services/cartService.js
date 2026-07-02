@@ -106,6 +106,9 @@ class CartService {
   }
 }
 
-// Singleton export
+// Named export for testing (allows fresh instances)
+export { CartService }
+
+// Singleton export for production use
 const cartService = new CartService()
 export default cartService

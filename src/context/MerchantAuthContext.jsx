@@ -1,8 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { unwrap } from '../utils/apiUtils'
 import API from '../config/api'
 
 const MerchantAuthContext = createContext(null)
-
 const STORAGE_KEY = 'shop_merchant_auth'
 
 function decodeJWT(token) {
@@ -28,14 +28,14 @@ export function MerchantAuthProvider({ children }) {
     }
   }, [authState])
 
+  // Response: { success, data: { id, firstName, ..., accessToken, refreshToken } }
   const login = useCallback(async (username, password) => {
-    const res = await fetch(API.auth.login, {
-      method: 'POST',
+    const res  = await fetch(API.auth.login, {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, expiresInMins: 60 }),
+      body:    JSON.stringify({ username, password }),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || 'Invalid credentials')
+    const data = await unwrap(res)
     const { accessToken, refreshToken, ...user } = data
     setAuthState({ user, accessToken, refreshToken })
     return { user, accessToken }
@@ -49,7 +49,6 @@ export function MerchantAuthProvider({ children }) {
     setAuthState((prev) => ({ ...prev, user: { ...prev.user, ...partial } }))
   }, [])
 
-  // Authenticated fetch with Bearer token
   const merchantFetch = useCallback(async (url, options = {}) => {
     const token = authState.accessToken
     if (!token) throw new Error('Not authenticated')
@@ -57,7 +56,7 @@ export function MerchantAuthProvider({ children }) {
       ...options,
       headers: {
         ...(options.headers || {}),
-        Authorization: `Bearer ${token}`,
+        Authorization:   `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     })
@@ -67,10 +66,10 @@ export function MerchantAuthProvider({ children }) {
 
   return (
     <MerchantAuthContext.Provider value={{
-      user:          authState.user,
-      accessToken:   authState.accessToken,
+      user:           authState.user,
+      accessToken:    authState.accessToken,
       tokenPayload,
-      isLoggedIn:    !!authState.accessToken,
+      isLoggedIn:     !!authState.accessToken,
       login,
       logout,
       updateMerchant,

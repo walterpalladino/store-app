@@ -9,6 +9,7 @@ import {
   ShoppingBagOutlined, LocalOfferOutlined, PaidOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 
 // Reuse the same safe fetch + fallback from PurchaseHistoryPanel
 const FALLBACK = [{
@@ -72,15 +73,19 @@ export default function AdminSells() {
   const load = useCallback(async () => {
     setLoading(true); setError(''); setUsingFallback(false)
     try {
-      const res = await fetch(API.transactions.list)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      const list = Array.isArray(data.transactions) ? data.transactions : Array.isArray(data) ? data : [data]
+      const res  = await fetch(API.orders.list)
+      const data = await unwrap(res)  // { orders: [...] }
+      const list = Array.isArray(data.orders) ? data.orders
+        : Array.isArray(data.transactions) ? data.transactions
+        : Array.isArray(data) ? data : [data]
       setTransactions(list)
-      // Load thumbnails in background
-      const ids = [...new Set(list.flatMap((tx) => tx.products.map((p) => p.id)))]
+      // Load thumbnails in background — each product endpoint now { success, data: {...} }
+      const ids = [...new Set(list.flatMap((tx) => tx.products.map((p) => p.productId ?? p.id)))]
       Promise.all(ids.map((id) =>
-        fetch(API.products.byId(id)).then((r) => r.json()).then((d) => [id, d.thumbnail]).catch(() => null)
+        fetch(API.products.byId(id))
+          .then((r) => r.json())
+          .then((body) => { const d = body.success ? body.data : body; return [id, d.thumbnail] })
+          .catch(() => null)
       )).then((results) => {
         const map = {}
         results.forEach((r) => { if (r) map[r[0]] = r[1] })

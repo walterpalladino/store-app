@@ -1,4 +1,5 @@
 import API from '../config/api'
+import { unwrap } from '../utils/apiUtils'
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
@@ -551,11 +552,10 @@ export default function CheckoutPage() {
     setLoadingProfile(true)
     setProfileError('')
     try {
-      const res = await authFetch(API.auth.me)
-      if (!res.ok) throw new Error('Could not load profile')
-      const data = await res.json()
-      setAddress(data.address  ?? null)
-      setPayment(data.bank     ?? null)
+      const res  = await authFetch(API.auth.me)
+      const data = await unwrap(res)  // { id, firstName, ..., address, bank, ... }
+      setAddress(data.address ?? null)
+      setPayment(data.bank    ?? null)
     } catch (err) {
       setProfileError(err.message)
     } finally {

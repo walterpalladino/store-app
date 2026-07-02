@@ -13,6 +13,7 @@ import {
   ImageOutlined, DriveFileRenameOutlineOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 
 const PAGE_SIZE = 15
 
@@ -215,9 +216,8 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
       }
       const url    = isNew ? API.products.add : API.products.byId(product.id)
       const method = isNew ? 'POST' : 'PATCH'
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || `HTTP ${res.status}`) }
-      const saved = await res.json()
+      const res   = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const saved = await unwrap(res)  // { id, title, price, ... } (throws on success:false)
       onSaved({ ...body, id: saved.id ?? product?.id ?? Date.now(), rating: product?.rating ?? 0, ...saved })
     } catch (err) { setApiError(err.message || 'Save failed. Please try again.') }
     finally { setSaving(false) }
@@ -338,7 +338,10 @@ export default function AdminProducts() {
   const showToast = (message, severity = 'success') => setToast({ open: true, message, severity })
 
   useEffect(() => {
-    fetch(API.products.categories).then((r) => r.json()).then((d) => setCategories(Array.isArray(d) ? d : [])).catch(() => {})
+    fetch(API.products.categories)
+      .then((r) => r.json())
+      .then((body) => { const d = body.success ? body.data : body; setCategories(Array.isArray(d) ? d : []) })
+      .catch(() => {})
   }, [])
 
   const loadProducts = useCallback(async () => {
@@ -349,9 +352,8 @@ export default function AdminProducts() {
       if (search.trim())        url = `${API.products.search}?q=${encodeURIComponent(search.trim())}&limit=${PAGE_SIZE}&skip=${skip}`
       else if (category !== 'all') url = `${API.products.byCategory(category)}?limit=${PAGE_SIZE}&skip=${skip}`
       else                      url = `${API.products.list}?limit=${PAGE_SIZE}&skip=${skip}`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('Failed to load products')
-      const data = await res.json()
+      const res  = await fetch(url)
+      const data = await unwrap(res)  // { products: [...], total, skip, limit }
       setProducts(data.products ?? []); setTotal(data.total ?? 0)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }

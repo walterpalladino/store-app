@@ -1,4 +1,5 @@
 import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 import { useState } from 'react'
 import {
   Box, Typography, Grid, TextField, Button, Divider, Avatar,
@@ -99,17 +100,17 @@ function ProfileSection({ user }) {
     setSaving(true)
     setError('')
     try {
-      // Simulate a PATCH /users/:id call — DummyJSON accepts but doesn't persist
-      await fetch(API.users.byId(user.id), {
-        method: 'PATCH',
+      const res = await fetch(API.users.byId(user.id), {
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body:    JSON.stringify({
           firstName: form.firstName,
-          lastName: form.lastName,
-          email: form.email,
-          phone: form.phone,
+          lastName:  form.lastName,
+          email:     form.email,
+          phone:     form.phone,
         }),
       })
+      await unwrap(res)   // throws on success:false
       setSaved(true)
       setEditing(false)
       setTimeout(() => setSaved(false), 3000)
@@ -293,13 +294,17 @@ function ResetPasswordSection() {
     setSaving(true)
     setApiError('')
     try {
-      // Simulated — DummyJSON has no real password-change endpoint
-      await new Promise((r) => setTimeout(r, 900))
+      const res = await fetch(API.auth.passwordChange, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ currentPassword: form.current, newPassword: form.next }),
+      })
+      await unwrap(res)   // throws with server message on failure
       setSuccess(true)
       setForm({ current: '', next: '', confirm: '' })
       setTimeout(() => setSuccess(false), 4000)
-    } catch {
-      setApiError('Could not update password. Please try again.')
+    } catch (err) {
+      setApiError(err.message || 'Could not update password. Please try again.')
     } finally {
       setSaving(false)
     }

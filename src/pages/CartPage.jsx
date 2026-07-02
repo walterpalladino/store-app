@@ -1,4 +1,5 @@
 import API from '../config/api'
+import { unwrap } from '../utils/apiUtils'
 import { useState, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
@@ -576,17 +577,16 @@ export default function CartPage() {
     setTestError('')
     setTestSuccess('')
     try {
-      // 1. Fetch a sample cart
-      const cartRes = await fetch(API.carts.byId(1))
-      if (!cartRes.ok) throw new Error('Could not fetch test cart')
-      const cartData = await cartRes.json()
-      // cartData.products = [{ id, title, price, quantity, thumbnail, ... }]
+      // 1. Fetch a sample cart — { success, data: { products, total, ... } }
+      const cartRes  = await fetch(API.carts.byId(1))
+      const cartData = await unwrap(cartRes)
 
-      // 2. Fetch full product detail for each cart item in parallel
+      // 2. Fetch full product detail for each cart item in parallel — { success, data: {...} }
       const fullProducts = await Promise.all(
         cartData.products.map((p) =>
           fetch(API.products.byId(p.id))
             .then((r) => r.json())
+            .then((body) => (body.success ? body.data : body))
             .catch(() => null)
         )
       )

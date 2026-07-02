@@ -1,4 +1,5 @@
 import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Grid, TextField, Button, Divider,
@@ -415,6 +416,13 @@ function PaymentForm({ initial, onSave, onCancel, saving }) {
     return errs
   }
 
+  // Button is disabled until all fields are validly filled
+  const isComplete = (
+    form.cardNumber.replace(/\D/g, '').length >= 13 &&
+    form.cardType.trim() !== '' &&
+    /^\d{2}\/\d{2}$/.test(form.cardExpire)
+  )
+
   const handleSubmit = (e) => {
     e.preventDefault()
     const errs = validate()
@@ -517,7 +525,7 @@ function PaymentForm({ initial, onSave, onCancel, saving }) {
           <Button
             type="submit"
             variant="contained"
-            disabled={saving}
+            disabled={!isComplete || saving}
             startIcon={
               saving
                 ? <CircularProgress size={14} sx={{ color: 'inherit' }} />
@@ -580,10 +588,8 @@ export default function PaymentMethodsPanel() {
     setLoading(true)
     setLoadError('')
     try {
-      const res = await authFetch(API.auth.me)
-      if (!res.ok) throw new Error('Failed to load payment data')
-      const data = await res.json()
-      // data.bank = { cardExpire, cardNumber, cardType, currency, iban }
+      const res  = await authFetch(API.auth.me)
+      const data = await unwrap(res)   // { id, firstName, ..., address, bank, ... }
       setBank(data.bank ?? null)
     } catch (err) {
       setLoadError(err.message || 'Could not load payment methods.')
@@ -602,13 +608,11 @@ export default function PaymentMethodsPanel() {
       // Merge with existing bank data to preserve currency/iban fields
       const updatedBank = { ...(bank ?? {}), ...formData }
 
-      const res = await authFetch(API.users.byId(user.id), {
+      const res     = await authFetch(API.users.byId(user.id), {
         method: 'PATCH',
-        body: JSON.stringify({ bank: updatedBank }),
+        body:   JSON.stringify({ bank: updatedBank }),
       })
-      if (!res.ok) throw new Error('Failed to save payment method')
-      const updated = await res.json()
-
+      const updated = await unwrap(res)   // { id, firstName, ..., bank, ... }
       const newBank = updated.bank ?? updatedBank
       setBank(newBank)
       updateUser({ bank: newBank })

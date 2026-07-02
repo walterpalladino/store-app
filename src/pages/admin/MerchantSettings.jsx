@@ -8,6 +8,8 @@ import {
   LanguageOutlined, EditOutlined, SaveOutlined, CheckRounded,
 } from '@mui/icons-material'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
+import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 
 const fieldSx = {
   '& .MuiInputLabel-root': { fontFamily: '"DM Sans", sans-serif', fontSize: '0.82rem' },
@@ -65,11 +67,12 @@ export default function MerchantSettings() {
   const handleSave = async () => {
     setSaving(true); setError('')
     try {
-      await fetch(`https://dummyjson.com/users/${user.id}`, {
-        method: 'PATCH',
+      const res = await fetch(API.users.byId(user.id), {
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone }),
+        body:    JSON.stringify({ firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone }),
       })
+      await unwrap(res)
       updateMerchant({ firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone })
       setEditing(false)
       setSaved(true)

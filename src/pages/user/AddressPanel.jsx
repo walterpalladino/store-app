@@ -1,4 +1,5 @@
 import API from '../../config/api'
+import { unwrap } from '../../utils/apiUtils'
 import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Grid, TextField, Button, Divider,
@@ -204,6 +205,15 @@ function AddressForm({ initial, onSave, onCancel, saving }) {
     return errs
   }
 
+  // Button is disabled until every required field has a non-empty value
+  const isComplete = (
+    form.address.trim() !== '' &&
+    form.city.trim()    !== '' &&
+    form.state.trim()   !== '' &&
+    form.postalCode.trim() !== '' &&
+    form.country.trim() !== ''
+  )
+
   const handleSubmit = (e) => {
     e.preventDefault()
     const errs = validate()
@@ -270,7 +280,7 @@ function AddressForm({ initial, onSave, onCancel, saving }) {
           <Button
             type="submit"
             variant="contained"
-            disabled={saving}
+            disabled={!isComplete || saving}
             startIcon={
               saving
                 ? <CircularProgress size={14} sx={{ color: 'inherit' }} />
@@ -325,10 +335,8 @@ export default function AddressPanel() {
     setLoading(true)
     setLoadError('')
     try {
-      const res = await authFetch(API.auth.me)
-      if (!res.ok) throw new Error('Failed to load user data')
-      const data = await res.json()
-      // data.address = { address, city, state, stateCode, postalCode, country, coordinates }
+      const res  = await authFetch(API.auth.me)
+      const data = await unwrap(res)   // { id, firstName, ..., address, bank, ... }
       setAddress(data.address ?? null)
     } catch (err) {
       setLoadError(err.message || 'Could not load address.')
@@ -344,14 +352,11 @@ export default function AddressPanel() {
     setSaving(true)
     setSaveError('')
     try {
-      const res = await authFetch(API.users.byId(user.id), {
+      const res     = await authFetch(API.users.byId(user.id), {
         method: 'PATCH',
-        body: JSON.stringify({ address: formData }),
+        body:   JSON.stringify({ address: formData }),
       })
-      if (!res.ok) throw new Error('Failed to save address')
-      const updated = await res.json()
-
-      // DummyJSON echoes back the patched object
+      const updated = await unwrap(res)   // { id, firstName, ..., address, ... }
       const newAddress = updated.address ?? formData
       setAddress(newAddress)
 

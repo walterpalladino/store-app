@@ -1,0 +1,77 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// We test the URL construction by importing after setting the env variable.
+// Vite inlines import.meta.env at build time, so in tests we stub it via vi.stubEnv.
+
+describe('API config', () => {
+  let API
+
+  beforeEach(async () => {
+    vi.stubEnv('VITE_API_BASE', 'http://localhost:3000')
+    // Dynamic import so each test can control the env
+    const mod = await import('../config/api.js?t=' + Date.now())
+    API = mod.default
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  describe('auth endpoints', () => {
+    it('builds login URL',          () => expect(API.auth.login).toBe('http://localhost:3000/api/auth/login'))
+    it('builds refresh URL',        () => expect(API.auth.refresh).toBe('http://localhost:3000/api/auth/refresh'))
+    it('builds me URL',             () => expect(API.auth.me).toBe('http://localhost:3000/api/auth/me'))
+    it('builds passwordChange URL', () => expect(API.auth.passwordChange).toBe('http://localhost:3000/api/auth/password-change'))
+  })
+
+  // ── Users ─────────────────────────────────────────────────────────────────
+  describe('users endpoints', () => {
+    it('builds add URL',        () => expect(API.users.add).toBe('http://localhost:3000/api/users'))
+    it('builds byId URL',       () => expect(API.users.byId(42)).toBe('http://localhost:3000/api/users/42'))
+    it('coerces numeric id',    () => expect(API.users.byId(1)).toContain('/1'))
+  })
+
+  // ── Products ──────────────────────────────────────────────────────────────
+  describe('products endpoints', () => {
+    it('builds list URL',         () => expect(API.products.list).toBe('http://localhost:3000/api/products'))
+    it('builds search URL',       () => expect(API.products.search).toBe('http://localhost:3000/api/products/search'))
+    it('builds add URL',          () => expect(API.products.add).toBe('http://localhost:3000/api/products'))
+    it('builds byId URL',         () => expect(API.products.byId(7)).toBe('http://localhost:3000/api/products/7'))
+    it('builds categories URL',   () => expect(API.products.categories).toBe('http://localhost:3000/api/products/categories'))
+    it('builds categoryList URL', () => expect(API.products.categoryList).toBe('http://localhost:3000/api/products/category-list'))
+
+    it('encodes special chars in category slug', () => {
+      expect(API.products.byCategory('smart phones')).toContain('smart%20phones')
+    })
+
+    it('builds byCategory URL', () => {
+      expect(API.products.byCategory('beauty')).toBe(
+        'http://localhost:3000/api/products/category/beauty'
+      )
+    })
+  })
+
+  // ── Carts ──────────────────────────────────────────────────────────────────
+  describe('carts endpoints', () => {
+    it('builds byId URL', () => expect(API.carts.byId(1)).toBe('http://localhost:3000/api/carts/1'))
+  })
+
+  // ── Orders ───────────────────────────────────────────────────────────────────
+  describe('orders endpoints', () => {
+    it('builds list URL',   () => expect(API.orders.list).toBe('http://localhost:3000/api/orders'))
+    it('builds create URL', () => expect(API.orders.create).toBe('http://localhost:3000/api/orders'))
+    it('builds byId URL',   () => expect(API.orders.byId(5)).toBe('http://localhost:3000/api/orders/5'))
+  })
+
+  // ── Base URL handling ──────────────────────────────────────────────────────
+  describe('trailing slash handling', () => {
+    it('strips trailing slash from base URL', async () => {
+      vi.stubEnv('VITE_API_BASE', 'http://localhost:3000/')
+      vi.resetModules()
+      const mod = await import('../config/api.js?t=' + Date.now() + 'b')
+      expect(mod.default.auth.login).toBe('http://localhost:3000/api/auth/login')
+    })
+  })
+})

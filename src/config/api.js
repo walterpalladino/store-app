@@ -8,61 +8,47 @@
  *
  * Variable → Default target
  * ─────────────────────────────────────────────────────
- * VITE_API_AUTH         → https://dummyjson.com
- * VITE_API_USERS        → https://dummyjson.com
- * VITE_API_PRODUCTS     → https://dummyjson.com
- * VITE_API_CARTS        → https://dummyjson.com
- * VITE_API_TRANSACTIONS → https://dummyjson.com/c
+ * VITE_API_BASE → http://localhost:3000
+ *
+ * All endpoints share the same base — different domains can still be
+ * split via separate VITE_API_* variables if needed in the future.
  */
 
-// ── Read bases from env (Vite replaces import.meta.env at build time) ─────────
-const AUTH_BASE         = import.meta.env.VITE_API_AUTH         ?? 'https://dummyjson.com'
-const USERS_BASE        = import.meta.env.VITE_API_USERS        ?? 'https://dummyjson.com'
-const PRODUCTS_BASE     = import.meta.env.VITE_API_PRODUCTS     ?? 'https://dummyjson.com'
-const CARTS_BASE        = import.meta.env.VITE_API_CARTS        ?? 'https://dummyjson.com'
-const TRANSACTIONS_BASE = import.meta.env.VITE_API_TRANSACTIONS ?? 'https://dummyjson.com/c'
+const BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
 
-// Strip any accidental trailing slash so path concatenation is always clean
-const trim = (url) => url.replace(/\/$/, '')
-
-const A  = trim(AUTH_BASE)
-const U  = trim(USERS_BASE)
-const P  = trim(PRODUCTS_BASE)
-const C  = trim(CARTS_BASE)
-const T  = trim(TRANSACTIONS_BASE)
-
-// ── Endpoint map ──────────────────────────────────────────────────────────────
 const API = {
 
   auth: {
-    login:   `${A}/auth/login`,
-    refresh: `${A}/auth/refresh`,
-    me:      `${A}/auth/me`,
+    login:          `${BASE}/api/auth/login`,
+    refresh:        `${BASE}/api/auth/refresh`,
+    me:             `${BASE}/api/auth/me`,
+    passwordChange: `${BASE}/api/auth/password-change`,
   },
 
   users: {
-    add:   `${U}/users/add`,
-    byId:  (id) => `${U}/users/${id}`,
+    add:   `${BASE}/api/users`,
+    byId:  (id) => `${BASE}/api/users/${id}`,
   },
 
   products: {
-    list:       `${P}/products`,
-    search:     `${P}/products/search`,
-    byId:       (id)   => `${P}/products/${id}`,
-    add:        `${P}/products/add`,
-    byCategory: (slug) => `${P}/products/category/${encodeURIComponent(slug)}`,
-    categories: `${P}/products/categories`,
+    list:         `${BASE}/api/products`,
+    search:       `${BASE}/api/products/search`,
+    byId:         (id)   => `${BASE}/api/products/${id}`,
+    add:          `${BASE}/api/products`,
+    byCategory:   (slug) => `${BASE}/api/products/category/${encodeURIComponent(slug)}`,
+    categories:   `${BASE}/api/products/categories`,
+    categoryList: `${BASE}/api/products/category-list`,
   },
 
   carts: {
-    byId: (id) => `${C}/carts/${id}`,
+    byId: (id) => `${BASE}/api/carts/${id}`,
   },
 
-  // Custom mock response endpoints (id is the dummyjson /c/<id> hash)
-  transactions: {
-    list:     `${T}/f26f-5bcf-4ffe-ab46`,
-    detail:   `${T}/16cd-534f-49b7-be01`,
-    checkout: `${T}/d31a-f3ea-4681-b50a`,
+  // Orders (formerly "transactions" — renamed to match the API contract's REST resource)
+  orders: {
+    list:     `${BASE}/api/orders`,
+    byId:     (id) => `${BASE}/api/orders/${id}`,
+    create:   `${BASE}/api/orders`,
   },
 }
 
