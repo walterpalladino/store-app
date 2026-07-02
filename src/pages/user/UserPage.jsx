@@ -6,13 +6,12 @@ import {
   useMediaQuery, useTheme, Drawer, IconButton, Fade,
 } from '@mui/material'
 import {
-  ManageAccountsOutlined, HomeOutlined, CreditCardOutlined,
+  ManageAccountsOutlined, HomeOutlined,
   ReceiptLongOutlined, FavoriteBorderOutlined, LogoutRounded, ChevronRight, MenuRounded, Close,
 } from '@mui/icons-material'
 import { useAuth } from '../../context/AuthContext'
 import UserSettings from './UserSettings'
 import AddressPanel from './AddressPanel'
-import PaymentMethodsPanel from './PaymentMethodsPanel'
 import { PurchaseHistoryPanel } from './PurchaseHistoryPanel'
 import WishlistPanel from './WishlistPanel'
 
@@ -31,12 +30,6 @@ const NAV_ITEMS = [
     label: 'Addresses',
     icon: <HomeOutlined sx={{ fontSize: 19 }} />,
     component: AddressPanel,
-  },
-  {
-    id: 'payment',
-    label: 'Payment Methods',
-    icon: <CreditCardOutlined sx={{ fontSize: 19 }} />,
-    component: PaymentMethodsPanel,
   },
   {
     id: 'history',

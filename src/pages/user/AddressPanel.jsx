@@ -336,7 +336,7 @@ export default function AddressPanel() {
     setLoadError('')
     try {
       const res  = await authFetch(API.auth.me)
-      const data = await unwrap(res)   // { id, firstName, ..., address, bank, ... }
+      const data = await unwrap(res)   // { id, firstName, ..., address, ... }
       setAddress(data.address ?? null)
     } catch (err) {
       setLoadError(err.message || 'Could not load address.')

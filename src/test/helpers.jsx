@@ -68,13 +68,6 @@ export function makeUser(overrides = {}) {
       postalCode: '85001',
       country:    'United States',
     },
-    bank: {
-      cardExpire: '01/30',
-      cardNumber: '4111111111111111',
-      cardType:   'Visa',
-      currency:   'USD',
-      iban:       'US00 1234 5678',
-    },
     ...overrides,
   }
 }

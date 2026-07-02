@@ -547,15 +547,15 @@ export default function CheckoutPage() {
   const tax      = subtotal * TAX_RATE
   const total    = subtotal + shipping + tax
 
-  // Load saved address and payment from /auth/me
+  // Load saved address from /auth/me. Payment methods are no longer stored on
+  // the backend, so the card is entered manually at checkout time.
   const loadProfile = useCallback(async () => {
     setLoadingProfile(true)
     setProfileError('')
     try {
       const res  = await authFetch(API.auth.me)
-      const data = await unwrap(res)  // { id, firstName, ..., address, bank, ... }
+      const data = await unwrap(res)  // { id, firstName, ..., address, ... }
       setAddress(data.address ?? null)
-      setPayment(data.bank    ?? null)
     } catch (err) {
       setProfileError(err.message)
     } finally {
