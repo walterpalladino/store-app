@@ -4,11 +4,12 @@ import {
   Box, Typography, Avatar, Grid, Divider,
   List, ListItemButton, ListItemIcon, ListItemText,
   useMediaQuery, useTheme, Drawer, IconButton, Chip, Tooltip,
+  Menu, MenuItem,
 } from '@mui/material'
 import {
   StorefrontOutlined, InventoryOutlined, PointOfSaleOutlined,
   LogoutRounded, ChevronRight, MenuRounded, Close,
-  HomeOutlined, KeyRounded,
+  HomeOutlined, KeyRounded, KeyboardArrowDownRounded,
 } from '@mui/icons-material'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import MerchantSettings from './MerchantSettings'
@@ -213,6 +214,7 @@ export default function AdminPage() {
   const theme      = useTheme()
   const isMobile   = useMediaQuery(theme.breakpoints.down('md'))
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [menuAnchor, setMenuAnchor] = useState(null)
 
   const activeId = searchParams.get('tab') || 'settings'
   const setActiveId = (id) => {
@@ -297,8 +299,44 @@ export default function AdminPage() {
             avatar={<Avatar src={user?.image} sx={{ bgcolor: 'rgba(200,169,110,0.2)', color: '#c8a96e', fontSize: '0.65rem' }}>{!user?.image && `${user?.firstName?.[0] ?? ''}${user?.lastName?.[0] ?? ''}`}</Avatar>}
             label={`@${user?.username ?? '…'}`}
             size="small"
-            sx={{ bgcolor: 'rgba(245,240,232,0.06)', color: 'rgba(245,240,232,0.6)', fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem', border: '1px solid rgba(245,240,232,0.1)', height: 28 }}
+            onClick={(e) => setMenuAnchor(e.currentTarget)}
+            deleteIcon={<KeyboardArrowDownRounded sx={{ fontSize: 16 }} />}
+            onDelete={(e) => setMenuAnchor(e.currentTarget)}
+            aria-label="Account menu"
+            sx={{
+              bgcolor: 'rgba(245,240,232,0.06)', color: 'rgba(245,240,232,0.6)',
+              fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem',
+              border: '1px solid rgba(245,240,232,0.1)', height: 28, cursor: 'pointer',
+              '& .MuiChip-deleteIcon': { color: 'rgba(245,240,232,0.5)', '&:hover': { color: 'rgba(245,240,232,0.8)' } },
+              '&:hover': { bgcolor: 'rgba(245,240,232,0.1)' },
+            }}
           />
+
+          {/* Account dropdown — always-visible sign out */}
+          <Menu
+            anchorEl={menuAnchor}
+            open={!!menuAnchor}
+            onClose={() => setMenuAnchor(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            slotProps={{ paper: { sx: { mt: 1, minWidth: 180, borderRadius: 1.5, border: '1px solid', borderColor: 'divider' } } }}
+          >
+            <MenuItem
+              onClick={() => { setMenuAnchor(null); handleGoToStore() }}
+              sx={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.82rem', py: 1 }}
+            >
+              <ListItemIcon sx={{ minWidth: 32 }}><HomeOutlined sx={{ fontSize: 18 }} /></ListItemIcon>
+              Back to Store
+            </MenuItem>
+            <Divider />
+            <MenuItem
+              onClick={() => { setMenuAnchor(null); handleLogout() }}
+              sx={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.82rem', py: 1, color: 'error.main' }}
+            >
+              <ListItemIcon sx={{ minWidth: 32 }}><LogoutRounded sx={{ fontSize: 18, color: 'error.main' }} /></ListItemIcon>
+              Sign Out
+            </MenuItem>
+          </Menu>
         </Box>
       </Box>
 

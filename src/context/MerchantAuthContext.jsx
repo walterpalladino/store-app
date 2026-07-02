@@ -5,11 +5,24 @@ import API from '../config/api'
 const MerchantAuthContext = createContext(null)
 const STORAGE_KEY = 'shop_merchant_auth'
 
+// The backend exposes two roles: 'ADMIN' and 'USER'. Only admins may access
+// the merchant/admin section. Compared case-insensitively for robustness.
+const ADMIN_ROLE = 'ADMIN'
+export function hasAdminRole(role) {
+  return String(role ?? '').toUpperCase() === ADMIN_ROLE
+}
+
 function decodeJWT(token) {
   try {
     const payload = token.split('.')[1]
     return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
   } catch { return null }
+}
+
+function isTokenExpired(token) {
+  const payload = decodeJWT(token)
+  if (!payload?.exp) return false
+  return Date.now() / 1000 > payload.exp
 }
 
 export function MerchantAuthProvider({ children }) {
@@ -28,7 +41,21 @@ export function MerchantAuthProvider({ children }) {
     }
   }, [authState])
 
-  // Response: { success, data: { id, firstName, ..., accessToken, refreshToken } }
+  const logout = useCallback(() => {
+    setAuthState({ user: null, accessToken: null, refreshToken: null })
+  }, [])
+
+  // Drop a stale/expired session on mount so the route guard sends the user
+  // back to the admin login page instead of rendering a broken admin panel.
+  useEffect(() => {
+    if (authState.accessToken && isTokenExpired(authState.accessToken)) {
+      logout()
+    }
+    // Only needs to run once on mount for the rehydrated session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Response: { success, data: { id, firstName, ..., role, accessToken, refreshToken } }
   const login = useCallback(async (username, password) => {
     const res  = await fetch(API.auth.login, {
       method:  'POST',
@@ -37,12 +64,14 @@ export function MerchantAuthProvider({ children }) {
     })
     const data = await unwrap(res)
     const { accessToken, refreshToken, ...user } = data
+
+    // Reject non-admin accounts before establishing an admin session.
+    if (!hasAdminRole(user.role)) {
+      throw new Error('This account does not have administrator access.')
+    }
+
     setAuthState({ user, accessToken, refreshToken })
     return { user, accessToken }
-  }, [])
-
-  const logout = useCallback(() => {
-    setAuthState({ user: null, accessToken: null, refreshToken: null })
   }, [])
 
   const updateMerchant = useCallback((partial) => {
@@ -52,7 +81,8 @@ export function MerchantAuthProvider({ children }) {
   const merchantFetch = useCallback(async (url, options = {}) => {
     const token = authState.accessToken
     if (!token) throw new Error('Not authenticated')
-    return fetch(url, {
+
+    const res = await fetch(url, {
       ...options,
       headers: {
         ...(options.headers || {}),
@@ -60,16 +90,29 @@ export function MerchantAuthProvider({ children }) {
         'Content-Type': 'application/json',
       },
     })
-  }, [authState.accessToken])
+
+    // A rejected token means the admin session is no longer valid — sign out
+    // so the route guard redirects to the admin login page.
+    if (res.status === 401) {
+      logout()
+      throw new Error('Session expired. Please log in again.')
+    }
+
+    return res
+  }, [authState.accessToken, logout])
 
   const tokenPayload = authState.accessToken ? decodeJWT(authState.accessToken) : null
+
+  // A session backed by an expired access token is treated as logged-out.
+  const sessionValid = !!authState.accessToken && !isTokenExpired(authState.accessToken)
 
   return (
     <MerchantAuthContext.Provider value={{
       user:           authState.user,
       accessToken:    authState.accessToken,
       tokenPayload,
-      isLoggedIn:     !!authState.accessToken,
+      isLoggedIn:     sessionValid,
+      isAdmin:        sessionValid && hasAdminRole(authState.user?.role),
       login,
       logout,
       updateMerchant,

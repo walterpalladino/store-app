@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import {
   Box, Typography, TextField, Button, InputAdornment,
   IconButton, Alert, CircularProgress, Fade, Collapse,
@@ -46,7 +46,8 @@ export default function AdminLoginPage() {
   const [error, setError]     = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
 
-  if (isLoggedIn) { navigate(from, { replace: true }); return null }
+  // Already authenticated → redirect declaratively (never call navigate() during render)
+  if (isLoggedIn) return <Navigate to={from} replace />
 
   const handleChange = (e) => {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }))

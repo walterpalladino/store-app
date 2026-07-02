@@ -77,8 +77,8 @@ describe('ProtectedRoute', () => {
 
 // ── AdminProtectedRoute ────────────────────────────────────────────────────
 describe('AdminProtectedRoute', () => {
-  it('renders children when merchant is logged in', () => {
-    useMerchantAuth.mockReturnValue({ isLoggedIn: true })
+  it('renders children when an admin is logged in', () => {
+    useMerchantAuth.mockReturnValue({ isLoggedIn: true, isAdmin: true })
 
     render(
       <MemoryRouter initialEntries={['/admin']}>
@@ -94,7 +94,23 @@ describe('AdminProtectedRoute', () => {
   })
 
   it('redirects to /admin/login when merchant is not logged in', () => {
-    useMerchantAuth.mockReturnValue({ isLoggedIn: false })
+    useMerchantAuth.mockReturnValue({ isLoggedIn: false, isAdmin: false })
+
+    render(
+      <MemoryRouter initialEntries={['/admin']}>
+        <Routes>
+          <Route path="/admin" element={<AdminProtectedRoute><div>Admin Panel</div></AdminProtectedRoute>} />
+          <Route path="/admin/login" element={<div>Admin Login</div>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByText('Admin Panel')).not.toBeInTheDocument()
+    expect(screen.getByText('Admin Login')).toBeInTheDocument()
+  })
+
+  it('redirects to /admin/login when logged in without the admin role', () => {
+    useMerchantAuth.mockReturnValue({ isLoggedIn: true, isAdmin: false })
 
     render(
       <MemoryRouter initialEntries={['/admin']}>
@@ -110,7 +126,7 @@ describe('AdminProtectedRoute', () => {
   })
 
   it('uses a different redirect target from ProtectedRoute (/admin/login vs /login)', () => {
-    useMerchantAuth.mockReturnValue({ isLoggedIn: false })
+    useMerchantAuth.mockReturnValue({ isLoggedIn: false, isAdmin: false })
     useAuth.mockReturnValue({ isLoggedIn: false })
 
     const { container } = render(

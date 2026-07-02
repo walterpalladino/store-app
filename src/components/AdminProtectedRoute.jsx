@@ -2,10 +2,10 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useMerchantAuth } from '../context/MerchantAuthContext'
 
 export default function AdminProtectedRoute({ children }) {
-  const { isLoggedIn } = useMerchantAuth()
+  const { isLoggedIn, isAdmin } = useMerchantAuth()
   const location = useLocation()
 
-  if (!isLoggedIn) {
+  if (!isLoggedIn || !isAdmin) {
     return (
       <Navigate
         to="/admin/login"

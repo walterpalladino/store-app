@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom'
 import {
   Box, Container, Typography, TextField, Button, Divider,
   IconButton, InputAdornment, Alert, CircularProgress, Tabs, Tab,
@@ -316,11 +316,8 @@ export default function LoginPage() {
 
   const from = location.state?.from || '/'
 
-  // Already logged in — redirect
-  if (isLoggedIn) {
-    navigate(from, { replace: true })
-    return null
-  }
+  // Already logged in — redirect declaratively (never call navigate() during render)
+  if (isLoggedIn) return <Navigate to={from} replace />
 
   const handleLoginSuccess = () => {
     navigate(from, { replace: true })

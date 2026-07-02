@@ -11,9 +11,10 @@ function makeJWT(payload) {
 }
 const TOKEN         = makeJWT({ sub: '1', exp: Math.floor(Date.now() / 1000) + 3600 })
 const REFRESH_TOKEN = makeJWT({ sub: '1', exp: Math.floor(Date.now() / 1000) + 7200 })
+const EXPIRED_TOKEN = makeJWT({ sub: '1', exp: Math.floor(Date.now() / 1000) - 60 })
 
 function makeLoginData(overrides = {}) {
-  return { ...makeUser(), accessToken: TOKEN, refreshToken: REFRESH_TOKEN, ...overrides }
+  return { ...makeUser(), role: 'ADMIN', accessToken: TOKEN, refreshToken: REFRESH_TOKEN, ...overrides }
 }
 
 function wrapper({ children }) {
@@ -57,6 +58,17 @@ describe('MerchantAuthContext — initial state', () => {
     expect(result.current.tokenPayload).toBeTruthy()
     expect(result.current.tokenPayload.sub).toBe('1')
   })
+
+  it('treats an expired persisted token as logged-out', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      user: { ...makeUser(), role: 'ADMIN' }, accessToken: EXPIRED_TOKEN, refreshToken: REFRESH_TOKEN,
+    }))
+    const { result } = renderHook(() => useMerchantAuth(), { wrapper })
+    expect(result.current.isLoggedIn).toBe(false)
+    expect(result.current.isAdmin).toBe(false)
+    // stale session is cleared from storage on mount
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+  })
 })
 
 // ── login ──────────────────────────────────────────────────────────────────
@@ -68,8 +80,34 @@ describe('MerchantAuthContext — login', () => {
     await act(async () => { await result.current.login('emilys', 'emilyspass') })
 
     expect(result.current.isLoggedIn).toBe(true)
+    expect(result.current.isAdmin).toBe(true)
     expect(result.current.user?.username).toBe('emilys')
     expect(result.current.accessToken).toBe(TOKEN)
+  })
+
+  it('rejects a non-admin (USER) account and does not establish a session', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      mockJsonResponse(okEnvelope(makeLoginData({ role: 'USER' })))
+    )
+    const { result } = renderHook(() => useMerchantAuth(), { wrapper })
+
+    await expect(
+      act(async () => { await result.current.login('emilys', 'emilyspass') })
+    ).rejects.toThrow('administrator access')
+
+    expect(result.current.isLoggedIn).toBe(false)
+    expect(result.current.isAdmin).toBe(false)
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+  })
+
+  it('accepts the admin role case-insensitively', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      mockJsonResponse(okEnvelope(makeLoginData({ role: 'admin' })))
+    )
+    const { result } = renderHook(() => useMerchantAuth(), { wrapper })
+
+    await act(async () => { await result.current.login('emilys', 'emilyspass') })
+    expect(result.current.isAdmin).toBe(true)
   })
 
   it('persists to localStorage under merchant key', async () => {
@@ -193,6 +231,22 @@ describe('MerchantAuthContext — merchantFetch', () => {
     const [, opts] = fetch.mock.calls[0]
     expect(opts.headers['X-Custom']).toBe('yes')
     expect(opts.headers.Authorization).toContain('Bearer')
+  })
+
+  it('logs out on a 401 so the guard can redirect to admin login', async () => {
+    const { result } = renderHook(() => useMerchantAuth(), { wrapper })
+    await loginFirst(result)
+
+    global.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
+    let err
+    await act(async () => {
+      try { await result.current.merchantFetch('http://test/api/me') }
+      catch (e) { err = e }
+    })
+
+    expect(err?.message).toMatch(/Session expired/)
+    expect(result.current.isLoggedIn).toBe(false)
+    expect(result.current.isAdmin).toBe(false)
   })
 
   it('passes method and body through', async () => {
