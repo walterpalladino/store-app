@@ -15,8 +15,8 @@ export default function ProductCard({ product }) {
   const [justAdded, setJustAdded] = useState(false)
 
   const discountedPrice = (product.price * (1 - product.discountPercentage / 100)).toFixed(2)
-  const inCart      = isInCart(product.id)
-  const wishlisted  = isWishlisted(product.id)
+  const inCart      = isInCart(product.sku)
+  const wishlisted  = isWishlisted(product.sku)
 
   const handleCardClick = () => {
     navigate(`/product/${product.id}`, {

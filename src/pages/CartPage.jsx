@@ -1,18 +1,15 @@
-import API from '../config/api'
-import { unwrap } from '../utils/apiUtils'
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   Box, Container, Typography, Grid, Divider, Button,
   IconButton, Tooltip, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Paper, Avatar,
+  TableContainer, TableHead, TableRow,
   Fade, Collapse, Alert, useMediaQuery, useTheme,
-  CircularProgress, Chip,
 } from '@mui/material'
 import {
   ArrowBack, DeleteOutlineRounded, AddRounded, RemoveRounded,
   ShoppingBagOutlined, LockOutlined, LocalShippingOutlined,
-  ReceiptLongOutlined, ScienceOutlined,
+  ReceiptLongOutlined,
 } from '@mui/icons-material'
 import { useCart } from '../context/CartContext'
 
@@ -103,6 +100,8 @@ function CartRow({ item, onRemove, onDecrement, onIncrement }) {
   const { product, quantity } = item
   const unitPrice = product.price * (1 - (product.discountPercentage ?? 0) / 100)
   const lineTotal = unitPrice * quantity
+  // Products rebuilt from the SKU-only endpoint have no `id` → no detail link.
+  const linkProps = product.id ? { component: Link, to: `/product/${product.id}` } : {}
 
   return (
     <TableRow
@@ -116,8 +115,7 @@ function CartRow({ item, onRemove, onDecrement, onIncrement }) {
       <TableCell sx={{ py: 2.5, pl: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Box
-            component={Link}
-            to={`/product/${product.id}`}
+            {...linkProps}
             sx={{
               width: 72,
               height: 72,
@@ -149,8 +147,7 @@ function CartRow({ item, onRemove, onDecrement, onIncrement }) {
               {product.category}
             </Typography>
             <Typography
-              component={Link}
-              to={`/product/${product.id}`}
+              {...linkProps}
               sx={{
                 fontFamily: '"Cormorant Garamond", serif',
                 fontSize: '1rem',
@@ -166,7 +163,7 @@ function CartRow({ item, onRemove, onDecrement, onIncrement }) {
               {product.title}
             </Typography>
             <Typography sx={{ fontSize: '0.7rem', color: 'text.secondary', mt: 0.25 }}>
-              SKU: {product.sku || `PROD-${product.id}`}
+              SKU: {product.sku}
             </Typography>
           </Box>
         </Box>
@@ -193,9 +190,9 @@ function CartRow({ item, onRemove, onDecrement, onIncrement }) {
         <QtyControl
           value={quantity}
           max={product.stock}
-          onDecrement={() => onDecrement(product.id)}
-          onIncrement={() => onIncrement(product.id)}
-          onRemove={() => onRemove(product.id)}
+          onDecrement={() => onDecrement(product.sku)}
+          onIncrement={() => onIncrement(product.sku)}
+          onRemove={() => onRemove(product.sku)}
         />
       </TableCell>
 
@@ -218,6 +215,7 @@ function CartCard({ item, onRemove, onDecrement, onIncrement }) {
   const { product, quantity } = item
   const unitPrice = product.price * (1 - (product.discountPercentage ?? 0) / 100)
   const lineTotal = unitPrice * quantity
+  const linkProps = product.id ? { component: Link, to: `/product/${product.id}` } : {}
 
   return (
     <Box
@@ -232,8 +230,7 @@ function CartCard({ item, onRemove, onDecrement, onIncrement }) {
     >
       {/* Image */}
       <Box
-        component={Link}
-        to={`/product/${product.id}`}
+        {...linkProps}
         sx={{
           width: 80,
           height: 80,
@@ -275,7 +272,7 @@ function CartCard({ item, onRemove, onDecrement, onIncrement }) {
           {product.title}
         </Typography>
         <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', mb: 1 }}>
-          SKU: {product.sku || `PROD-${product.id}`}
+          SKU: {product.sku}
         </Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
@@ -305,7 +302,7 @@ function CartCard({ item, onRemove, onDecrement, onIncrement }) {
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
-function EmptyCart({ onLoadTestData, testLoading }) {
+function EmptyCart() {
   const navigate = useNavigate()
   return (
     <Fade in>
@@ -341,7 +338,7 @@ function EmptyCart({ onLoadTestData, testLoading }) {
         <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4, maxWidth: 320, mx: 'auto' }}>
           Looks like you haven’t added anything yet. Explore our collection to find something you’ll love.
         </Typography>
-        <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, justifyContent: 'center' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
           <Button
             variant="contained"
             onClick={() => navigate('/')}
@@ -349,29 +346,6 @@ function EmptyCart({ onLoadTestData, testLoading }) {
           >
             Continue Shopping
           </Button>
-          <Tooltip title="Populate cart with sample products from DummyJSON /carts/1" arrow>
-            <Button
-              variant="outlined"
-              onClick={onLoadTestData}
-              disabled={testLoading}
-              startIcon={
-                testLoading
-                  ? <CircularProgress size={14} sx={{ color: 'inherit' }} />
-                  : <ScienceOutlined sx={{ fontSize: 16 }} />
-              }
-              sx={{
-                px: 3,
-                py: 1.4,
-                fontSize: '0.72rem',
-                letterSpacing: '0.08em',
-                color: 'secondary.dark',
-                borderColor: 'rgba(200,169,110,0.5)',
-                '&:hover': { borderColor: 'secondary.main', bgcolor: 'rgba(200,169,110,0.06)' },
-              }}
-            >
-              {testLoading ? 'Loading…' : 'Load Test Data'}
-            </Button>
-          </Tooltip>
         </Box>
       </Box>
     </Fade>
@@ -563,55 +537,11 @@ export default function CartPage() {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
 
   const [removedItem, setRemovedItem] = useState(null)
-  const [testLoading, setTestLoading] = useState(false)
-  const [testError, setTestError]   = useState('')
-  const [testSuccess, setTestSuccess] = useState('')
 
-  // ── Load test data from DummyJSON /carts/1 ─────────────────────────────
-  // The cart endpoint returns lightweight product stubs; we fetch each full
-  // product record in parallel so CartRow gets all the fields it expects.
-  const handleLoadTestData = useCallback(async () => {
-    setTestLoading(true)
-    setTestError('')
-    setTestSuccess('')
-    try {
-      // 1. Fetch a sample cart — { success, data: { products, total, ... } }
-      const cartRes  = await fetch(API.carts.byId(1))
-      const cartData = await unwrap(cartRes)
-
-      // 2. Fetch full product detail for each cart item in parallel — { success, data: {...} }
-      const fullProducts = await Promise.all(
-        cartData.products.map((p) =>
-          fetch(API.products.byId(p.id))
-            .then((r) => r.json())
-            .then((body) => (body.success ? body.data : body))
-            .catch(() => null)
-        )
-      )
-
-      // 3. Add each to the cart (skip any that failed to load)
-      let added = 0
-      fullProducts.forEach((product, idx) => {
-        if (!product) return
-        const qty = cartData.products[idx].quantity ?? 1
-        addItem(product, qty)
-        added++
-      })
-
-      setTestSuccess(`${added} product${added !== 1 ? 's' : ''} loaded from DummyJSON cart #1`)
-      setTimeout(() => setTestSuccess(''), 4000)
-    } catch (err) {
-      setTestError(err.message || 'Failed to load test data')
-      setTimeout(() => setTestError(''), 5000)
-    } finally {
-      setTestLoading(false)
-    }
-  }, [addItem])
-
-  const handleRemove = (productId) => {
-    const item = items.find((i) => i.product.id === productId)
+  const handleRemove = (sku) => {
+    const item = items.find((i) => i.product.sku === sku)
     if (item) setRemovedItem(item)
-    removeItem(productId)
+    removeItem(sku)
   }
 
   const handleUndo = () => {
@@ -688,18 +618,6 @@ export default function CartPage() {
       </Box>
 
       <Container maxWidth="xl" sx={{ py: { xs: 3, md: 5 } }}>
-        {/* ── Test data feedback ── */}
-        <Collapse in={!!testError}>
-          <Alert severity="error" sx={{ mb: 2, fontSize: '0.78rem' }} onClose={() => setTestError('')}>
-            {testError}
-          </Alert>
-        </Collapse>
-        <Collapse in={!!testSuccess}>
-          <Alert severity="success" sx={{ mb: 2, fontSize: '0.78rem' }} onClose={() => setTestSuccess('')}>
-            {testSuccess}
-          </Alert>
-        </Collapse>
-
         {/* Undo snackbar */}
         <Collapse in={!!removedItem}>
           <Alert
@@ -718,7 +636,7 @@ export default function CartPage() {
         </Collapse>
 
         {items.length === 0 ? (
-          <EmptyCart onLoadTestData={handleLoadTestData} testLoading={testLoading} />
+          <EmptyCart />
         ) : (
           <Grid container spacing={{ xs: 3, md: 5 }}>
             {/* ── Left: item list ── */}
@@ -751,46 +669,6 @@ export default function CartPage() {
                   </Typography>
 
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    {/* ── Test data button ── */}
-                    <Tooltip
-                      title="Populate cart with sample products from DummyJSON /carts/1"
-                      arrow
-                      placement="top"
-                    >
-                      <Button
-                        size="small"
-                        onClick={handleLoadTestData}
-                        disabled={testLoading}
-                        startIcon={
-                          testLoading
-                            ? <CircularProgress size={12} sx={{ color: 'inherit' }} />
-                            : <ScienceOutlined sx={{ fontSize: 14 }} />
-                        }
-                        sx={{
-                          fontSize: '0.65rem',
-                          letterSpacing: '0.07em',
-                          textTransform: 'uppercase',
-                          color: 'secondary.dark',
-                          border: '1px dashed',
-                          borderColor: 'rgba(200,169,110,0.45)',
-                          borderRadius: 1,
-                          px: 1.5,
-                          py: 0.6,
-                          bgcolor: 'rgba(200,169,110,0.04)',
-                          '&:hover': {
-                            bgcolor: 'rgba(200,169,110,0.1)',
-                            borderColor: 'secondary.main',
-                          },
-                          '&:disabled': {
-                            color: 'text.secondary',
-                            borderColor: 'divider',
-                          },
-                        }}
-                      >
-                        {testLoading ? 'Loading…' : 'Load Test Data'}
-                      </Button>
-                    </Tooltip>
-
                     <Button
                       size="small"
                       onClick={() => { clearCart(); setRemovedItem(null) }}
@@ -839,7 +717,7 @@ export default function CartPage() {
                       <TableBody>
                         {items.map((item) => (
                           <CartRow
-                            key={item.product.id}
+                            key={item.product.sku}
                             item={item}
                             onRemove={handleRemove}
                             onDecrement={(id) => setQuantity(id, item.quantity - 1)}
@@ -854,7 +732,7 @@ export default function CartPage() {
                   <Box sx={{ px: 2.5 }}>
                     {items.map((item) => (
                       <CartCard
-                        key={item.product.id}
+                        key={item.product.sku}
                         item={item}
                         onRemove={handleRemove}
                         onDecrement={(id) => setQuantity(id, item.quantity - 1)}

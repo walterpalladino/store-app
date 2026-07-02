@@ -26,23 +26,23 @@ const API = {
   },
 
   users: {
-    add:   `${BASE}/api/users`,
-    byId:  (id) => `${BASE}/api/users/${id}`,
+    add:      `${BASE}/api/users`,
+    byId:     (id) => `${BASE}/api/users/${id}`,
+    // Cart and wishlist are auth-only singletons nested under the user (🔒).
+    cart:     (id) => `${BASE}/api/users/${id}/cart`,
+    wishlist: (id) => `${BASE}/api/users/${id}/wishlist`,
   },
 
   products: {
     list:         `${BASE}/api/products`,
     search:       `${BASE}/api/products/search`,
     byId:         (id)   => `${BASE}/api/products/${id}`,
+    bySku:        (sku)  => `${BASE}/api/products/sku/${encodeURIComponent(sku)}`,
     add:          `${BASE}/api/products`,
     byCategory:   (slug) => `${BASE}/api/products/category/${encodeURIComponent(slug)}`,
     categories:   `${BASE}/api/products/categories`,                                        // GET list · POST create (ADMIN)
     categoryBySlug: (slug) => `${BASE}/api/products/categories/${encodeURIComponent(slug)}`, // PUT/PATCH/DELETE (ADMIN)
     categoryList: `${BASE}/api/products/category-list`,
-  },
-
-  carts: {
-    byId: (id) => `${BASE}/api/carts/${id}`,
   },
 
   // Orders (formerly "transactions" — renamed to match the API contract's REST resource)

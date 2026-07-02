@@ -1,210 +1,160 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
+import { okEnvelope, mockJsonResponse } from './helpers.jsx'
+
+// Mock auth so we control the user and authFetch used for persistence.
+vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
+import { useAuth } from '../context/AuthContext'
 import { WishlistProvider, useWishlist } from '../context/WishlistContext'
-import { AuthProvider } from '../context/AuthContext'
-import { MemoryRouter } from 'react-router-dom'
-import { makeProduct, makeUser } from './helpers.jsx'
 
-// ── JWT helper ─────────────────────────────────────────────────────────────
-function makeJWT(payload = {}) {
-  const h = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const b = btoa(JSON.stringify({ sub: '42', exp: Math.floor(Date.now() / 1000) + 3600, ...payload }))
-  return `${h}.${b}.sig`
-}
-const TOKEN = makeJWT()
+const wrapper = ({ children }) => <WishlistProvider>{children}</WishlistProvider>
 
-const USER_ID    = 42
-const STORE_KEY  = `shop_wishlist_${USER_ID}`
-
-// ── wrapper factories ──────────────────────────────────────────────────────
-function makeWrapper(loggedIn = false) {
-  return function Wrapper({ children }) {
-    if (loggedIn) {
-      window.localStorage.setItem('shop_auth', JSON.stringify({
-        user: makeUser({ id: USER_ID }),
-        accessToken:  TOKEN,
-        refreshToken: TOKEN,
-      }))
-    }
-    return (
-      <MemoryRouter>
-        <AuthProvider>
-          <WishlistProvider>{children}</WishlistProvider>
-        </AuthProvider>
-      </MemoryRouter>
-    )
-  }
+// authFetch stub: routes by HTTP method. `get`/`mutate` are factories so each
+// call gets a fresh (single-use) Response.
+function makeAuthFetch({ get, mutate } = {}) {
+  return vi.fn((url, opts = {}) => {
+    const method = opts.method || 'GET'
+    if (method === 'GET') return Promise.resolve(get ? get() : new Response(null, { status: 404 }))
+    return Promise.resolve(mutate ? mutate() : mockJsonResponse(okEnvelope({ id: 1 })))
+  })
 }
 
-const P1 = makeProduct({ id: 10, title: 'Widget', price: 29.99, discountPercentage: 5,  category: 'tools'     })
-const P2 = makeProduct({ id: 20, title: 'Gadget', price: 99.99, discountPercentage: 10, category: 'electronics' })
+function loginAs(authFetch) {
+  useAuth.mockReturnValue({ user: { id: 10 }, isLoggedIn: true, authFetch })
+}
 
-beforeEach(() => { window.localStorage.clear(); vi.restoreAllMocks() })
-afterEach  (() => { vi.restoreAllMocks() })
+beforeEach(() => { vi.restoreAllMocks() })
+afterEach(() => { vi.restoreAllMocks() })
 
-// ── unauthenticated ────────────────────────────────────────────────────────
-describe('WishlistContext — unauthenticated', () => {
-  it('starts with empty items and count 0', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
+describe('WishlistContext — logged out', () => {
+  it('is empty and cannot be used', () => {
+    useAuth.mockReturnValue({ user: null, isLoggedIn: false, authFetch: vi.fn() })
+    const { result } = renderHook(() => useWishlist(), { wrapper })
     expect(result.current.items).toEqual([])
-    expect(result.current.count).toBe(0)
+    expect(result.current.canUse).toBe(false)
   })
 
-  it('addToWishlist is a no-op', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
-    act(() => { result.current.addToWishlist(P1) })
-    expect(result.current.items).toHaveLength(0)
-  })
-
-  it('removeFromWishlist is a no-op', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
-    act(() => { result.current.removeFromWishlist(P1.id) })
-    expect(result.current.items).toHaveLength(0)
-  })
-
-  it('clearWishlist is a no-op', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
-    act(() => { result.current.clearWishlist() })
-    expect(result.current.items).toHaveLength(0)
-  })
-
-  it('toggleWishlist returns false', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
+  it('toggleWishlist returns false and does not persist when logged out', () => {
+    const authFetch = vi.fn()
+    useAuth.mockReturnValue({ user: null, isLoggedIn: false, authFetch })
+    const { result } = renderHook(() => useWishlist(), { wrapper })
     let ret
-    act(() => { ret = result.current.toggleWishlist(P1) })
+    act(() => { ret = result.current.toggleWishlist({ sku: 'A' }) })
     expect(ret).toBe(false)
-    expect(result.current.items).toHaveLength(0)
-  })
-
-  it('isWishlisted always returns false', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(false) })
-    expect(result.current.isWishlisted(P1.id)).toBe(false)
+    expect(authFetch).not.toHaveBeenCalled()
   })
 })
 
-// ── authenticated ──────────────────────────────────────────────────────────
-describe('WishlistContext — authenticated', () => {
-  it('addToWishlist adds item and increments count', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    expect(result.current.items).toHaveLength(1)
-    expect(result.current.count).toBe(1)
-    expect(result.current.items[0].id).toBe(P1.id)
+describe('WishlistContext — logged in', () => {
+  it('starts empty when the backend has no wishlist yet (404)', async () => {
+    loginAs(makeAuthFetch()) // GET → 404
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.items).toEqual([])
   })
 
-  it('addToWishlist stores the correct fields', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    const item = result.current.items[0]
-    expect(item.id).toBe(P1.id)
-    expect(item.title).toBe(P1.title)
-    expect(item.price).toBe(P1.price)
-    expect(item.discountPercentage).toBe(P1.discountPercentage)
-    expect(item.thumbnail).toBe(P1.thumbnail)
-    expect(item.category).toBe(P1.category)
-    expect(typeof item.addedAt).toBe('string')
+  it('hydrates items by refetching each SKU', async () => {
+    loginAs(makeAuthFetch({
+      get: () => mockJsonResponse(okEnvelope({ name: 'Ideas', items: [{ sku: 'RCH45Q1A' }] })),
+    }))
+    // product-by-sku lookup (public endpoint) — note: no `id`
+    global.fetch = vi.fn().mockResolvedValue(
+      mockJsonResponse(okEnvelope({ sku: 'RCH45Q1A', title: 'Mascara', price: 9.99, thumbnail: 't', category: 'beauty' })),
+    )
+
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.count).toBe(1))
+
+    expect(result.current.isWishlisted('RCH45Q1A')).toBe(true)
+    expect(result.current.items[0]).toMatchObject({ sku: 'RCH45Q1A', title: 'Mascara' })
   })
 
-  it('addToWishlist is idempotent — duplicate is ignored', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    act(() => { result.current.addToWishlist(P1) })
-    expect(result.current.items).toHaveLength(1)
+  it('adds a product optimistically and persists the SKU set', async () => {
+    const authFetch = makeAuthFetch() // GET → 404, mutate → ok
+    loginAs(authFetch)
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => { result.current.addToWishlist({ sku: 'A', id: 1, title: 'X', price: 5 }) })
+
+    expect(result.current.isWishlisted('A')).toBe(true)
+    const write = authFetch.mock.calls.find(([, o]) => o && o.method && o.method !== 'GET')
+    expect(write).toBeTruthy()
+    expect(JSON.parse(write[1].body).items).toContain('A')
   })
 
-  it('addToWishlist handles missing discountPercentage (defaults to 0)', () => {
-    const prod = makeProduct({ id: 99, discountPercentage: undefined })
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(prod) })
-    expect(result.current.items[0].discountPercentage).toBe(0)
-  })
+  it('removes an item by SKU', async () => {
+    loginAs(makeAuthFetch({
+      get: () => mockJsonResponse(okEnvelope({ name: 'Ideas', items: [{ sku: 'A' }] })),
+    }))
+    global.fetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope({ sku: 'A', title: 'X', price: 5 })))
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.count).toBe(1))
 
-  it('isWishlisted returns true after add', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    expect(result.current.isWishlisted(P1.id)).toBe(true)
-    expect(result.current.isWishlisted(P2.id)).toBe(false)
-  })
-
-  it('removeFromWishlist removes the item', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    act(() => { result.current.addToWishlist(P2) })
-    act(() => { result.current.removeFromWishlist(P1.id) })
-    expect(result.current.items).toHaveLength(1)
-    expect(result.current.items[0].id).toBe(P2.id)
-    expect(result.current.isWishlisted(P1.id)).toBe(false)
-  })
-
-  it('removeFromWishlist is a no-op for unknown id', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    act(() => { result.current.removeFromWishlist(999) })
-    expect(result.current.items).toHaveLength(1)
-  })
-
-  it('toggleWishlist adds when not wishlisted and returns true', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    let ret
-    act(() => { ret = result.current.toggleWishlist(P1) })
-    expect(ret).toBe(true)
-    expect(result.current.isWishlisted(P1.id)).toBe(true)
-  })
-
-  it('toggleWishlist removes when already wishlisted and returns false', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    let ret
-    act(() => { ret = result.current.toggleWishlist(P1) })
-    expect(ret).toBe(false)
-    expect(result.current.isWishlisted(P1.id)).toBe(false)
-  })
-
-  it('clearWishlist empties all items', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    act(() => { result.current.addToWishlist(P2) })
-    act(() => { result.current.clearWishlist() })
-    expect(result.current.items).toHaveLength(0)
+    act(() => { result.current.removeFromWishlist('A') })
+    expect(result.current.isWishlisted('A')).toBe(false)
     expect(result.current.count).toBe(0)
   })
 
-  it('persists items to localStorage with user-specific key', () => {
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    act(() => { result.current.addToWishlist(P1) })
-    const stored = JSON.parse(window.localStorage.getItem(STORE_KEY))
-    expect(stored).toHaveLength(1)
-    expect(stored[0].id).toBe(P1.id)
+  it('toggleWishlist adds then removes', async () => {
+    loginAs(makeAuthFetch())
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => { expect(result.current.toggleWishlist({ sku: 'A', title: 'X', price: 5 })).toBe(true) })
+    expect(result.current.isWishlisted('A')).toBe(true)
+    act(() => { expect(result.current.toggleWishlist({ sku: 'A', title: 'X', price: 5 })).toBe(false) })
+    expect(result.current.isWishlisted('A')).toBe(false)
   })
 
-  it('loads pre-existing items from localStorage on mount', () => {
-    const existing = [{ id: P1.id, title: P1.title, price: P1.price, discountPercentage: 5, thumbnail: '', category: 'tools', addedAt: '2024-01-01' }]
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(existing))
-    // Also seed auth session
-    window.localStorage.setItem('shop_auth', JSON.stringify({
-      user: makeUser({ id: USER_ID }), accessToken: TOKEN, refreshToken: TOKEN,
+  it('clearWishlist empties the list', async () => {
+    loginAs(makeAuthFetch({
+      get: () => mockJsonResponse(okEnvelope({ name: 'Ideas', items: [{ sku: 'A' }] })),
     }))
+    global.fetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope({ sku: 'A', title: 'X', price: 5 })))
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.count).toBe(1))
 
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
-    expect(result.current.items).toHaveLength(1)
-    expect(result.current.items[0].id).toBe(P1.id)
+    act(() => { result.current.clearWishlist() })
+    expect(result.current.count).toBe(0)
   })
 
-  it('handles corrupted localStorage gracefully — defaults to empty', () => {
-    window.localStorage.setItem(STORE_KEY, 'not-valid-json')
-    window.localStorage.setItem('shop_auth', JSON.stringify({
-      user: makeUser({ id: USER_ID }), accessToken: TOKEN, refreshToken: TOKEN,
+  it('reverts the optimistic add and surfaces an error when persistence fails', async () => {
+    const authFetch = makeAuthFetch({ mutate: () => mockJsonResponse(okEnvelope(null), 500) })
+    loginAs(authFetch)
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => { result.current.addToWishlist({ sku: 'A', title: 'X', price: 5 }) })
+    await waitFor(() => expect(result.current.isWishlisted('A')).toBe(false)) // reverted
+    expect(result.current.error).toBeTruthy()
+  })
+
+  it('keeps a bare { sku } item when the product refetch fails (network error)', async () => {
+    loginAs(makeAuthFetch({
+      get: () => mockJsonResponse(okEnvelope({ name: 'Ideas', items: [{ sku: 'GHOST' }] })),
     }))
-    const { result } = renderHook(() => useWishlist(), { wrapper: makeWrapper(true) })
+    global.fetch = vi.fn().mockRejectedValue(new Error('network'))
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.count).toBe(1))
+    expect(result.current.items[0]).toEqual({ sku: 'GHOST' })
+  })
+
+  it('clearWishlist is a no-op on an already-empty list', async () => {
+    const authFetch = makeAuthFetch()
+    loginAs(authFetch)
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    const before = authFetch.mock.calls.length
+    act(() => { result.current.clearWishlist() })
+    expect(authFetch.mock.calls.length).toBe(before) // nothing persisted
+  })
+
+  it('sets an error when the wishlist load fails', async () => {
+    loginAs(makeAuthFetch({ get: () => mockJsonResponse(okEnvelope(null), 500) }))
+    const { result } = renderHook(() => useWishlist(), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.error).toBeTruthy()
     expect(result.current.items).toEqual([])
-  })
-})
-
-// ── useWishlist guard ──────────────────────────────────────────────────────
-describe('useWishlist — guard', () => {
-  it('throws when used outside WishlistProvider', () => {
-    expect(() => renderHook(() => useWishlist())).toThrow(
-      'useWishlist must be used inside WishlistProvider'
-    )
   })
 })

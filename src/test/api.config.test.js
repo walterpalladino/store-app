@@ -31,6 +31,8 @@ describe('API config', () => {
     it('builds add URL',        () => expect(API.users.add).toBe('http://localhost:3000/api/users'))
     it('builds byId URL',       () => expect(API.users.byId(42)).toBe('http://localhost:3000/api/users/42'))
     it('coerces numeric id',    () => expect(API.users.byId(1)).toContain('/1'))
+    it('builds cart URL',       () => expect(API.users.cart(10)).toBe('http://localhost:3000/api/users/10/cart'))
+    it('builds wishlist URL',   () => expect(API.users.wishlist(10)).toBe('http://localhost:3000/api/users/10/wishlist'))
   })
 
   // ── Products ──────────────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ describe('API config', () => {
     it('builds search URL',       () => expect(API.products.search).toBe('http://localhost:3000/api/products/search'))
     it('builds add URL',          () => expect(API.products.add).toBe('http://localhost:3000/api/products'))
     it('builds byId URL',         () => expect(API.products.byId(7)).toBe('http://localhost:3000/api/products/7'))
+    it('builds bySku URL',        () => expect(API.products.bySku('BMW-PNC-001')).toBe('http://localhost:3000/api/products/sku/BMW-PNC-001'))
+    it('encodes special chars in bySku', () => expect(API.products.bySku('a b')).toContain('a%20b'))
     it('builds categories URL',   () => expect(API.products.categories).toBe('http://localhost:3000/api/products/categories'))
     it('builds categoryBySlug URL', () => expect(API.products.categoryBySlug('home-decoration')).toBe('http://localhost:3000/api/products/categories/home-decoration'))
     it('encodes special chars in categoryBySlug', () => expect(API.products.categoryBySlug('a b')).toContain('a%20b'))
@@ -53,11 +57,6 @@ describe('API config', () => {
         'http://localhost:3000/api/products/category/beauty'
       )
     })
-  })
-
-  // ── Carts ──────────────────────────────────────────────────────────────────
-  describe('carts endpoints', () => {
-    it('builds byId URL', () => expect(API.carts.byId(1)).toBe('http://localhost:3000/api/carts/1'))
   })
 
   // ── Orders ───────────────────────────────────────────────────────────────────

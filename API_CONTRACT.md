@@ -84,6 +84,11 @@ invalid token returns **401**.
 | Auth     | POST   | `/api/auth/password-change`            | 🔒   |
 | Users    | POST   | `/api/users`                           | —    |
 | Users    | PATCH  | `/api/users/:id`                       | 🔒   |
+| Wishlists| GET    | `/api/users/:id/wishlist`              | 🔒   |
+| Wishlists| POST   | `/api/users/:id/wishlist`              | 🔒   |
+| Wishlists| PUT    | `/api/users/:id/wishlist`              | 🔒   |
+| Wishlists| PATCH  | `/api/users/:id/wishlist`              | 🔒   |
+| Wishlists| DELETE | `/api/users/:id/wishlist`              | 🔒   |
 | Products | GET    | `/api/products`                        | —    |
 | Products | POST   | `/api/products`                        | 🔒 ADMIN |
 | Products | GET    | `/api/products/search`                 | —    |
@@ -105,9 +110,11 @@ invalid token returns **401**.
 | Reviews  | PUT    | `/api/products/:id/reviews/:reviewId`  | —    |
 | Reviews  | PATCH  | `/api/products/:id/reviews/:reviewId`  | —    |
 | Reviews  | DELETE | `/api/products/:id/reviews/:reviewId`  | —    |
-| Carts    | GET    | `/api/carts/:id`                       | —    |
-| Carts    | PUT    | `/api/carts/:id`                       | —    |
-| Carts    | DELETE | `/api/carts/:id`                       | —    |
+| Carts    | GET    | `/api/users/:id/cart`                  | 🔒   |
+| Carts    | POST   | `/api/users/:id/cart`                  | 🔒   |
+| Carts    | PUT    | `/api/users/:id/cart`                  | 🔒   |
+| Carts    | PATCH  | `/api/users/:id/cart`                  | 🔒   |
+| Carts    | DELETE | `/api/users/:id/cart`                  | 🔒   |
 | Orders   | GET    | `/api/orders`                          | —    |
 | Orders   | GET    | `/api/orders/:id`                      | —    |
 | Orders   | POST   | `/api/orders`                          | —    |
@@ -373,6 +380,12 @@ The **product object** returned by most endpoints:
   "tags": ["office", "writing"],
   "brand": "BMW",
   "sku": "BMW-PNC-001",
+  "color": "Black",
+  "size": "M",
+  "attr1": "",
+  "attr2": "",
+  "attr3": "",
+  "attr4": "",
   "weight": 0.1,
   "width": 1,
   "height": 15,
@@ -392,7 +405,8 @@ The **product object** returned by most endpoints:
 ```
 
 > `availabilityStatus` is computed from stock. The `GET /sku/:sku` variant omits
-> `id`, `isDeleted`, and `deletedOn`.
+> `id`, `isDeleted`, and `deletedOn`. `color`, `size` and `attr1`–`attr4` are
+> free-form string attributes (default `""`).
 
 ### GET `/api/products`
 
@@ -747,78 +761,203 @@ curl -X DELETE http://localhost:3000/api/products/1/reviews/5
 
 ---
 
-## Carts
+## Carts 🔒
 
-A cart is identified by its **user id**. The **cart object**:
+A cart is a **singleton nested under a user**: `/api/users/:id/cart`. Each user
+has **at most one** cart. Every route requires a Bearer token, and the `:id` in
+the path **must be the authenticated user's own id** — accessing another user's
+id returns `403`.
+
+The link to the user is by **username** (not a database foreign key). Cart items
+are a **denormalised snapshot** of the product — `sku`, `description`,
+`unitPrice`, `discountPrice` (the discounted unit price) and `qty` are all stored
+on the item, so the cart never joins back to products. The API only operates on
+the whole cart — send the full parent/child structure; there are no item-level
+endpoints.
+
+Cart-level totals are stored on the cart and recomputed on every write:
+
+- `totalItemPrices` = Σ `unitPrice` × `qty`
+- `totalItemDiscounts` = Σ (`unitPrice` − `discountPrice`) × `qty`
+
+The **cart object**:
 
 ```json
 {
-  "id": 1,
-  "userId": 10,
-  "products": [
+  "id": 7,
+  "username": "walterp",
+  "items": [
     {
       "id": 1,
-      "title": "BMW Pencil",
-      "price": 4.99,
-      "discountPercentage": 0,
-      "thumbnail": "https://example.com/thumb.png",
       "sku": "BMW-PNC-001",
-      "quantity": 3,
-      "total": 14.97,
-      "discountedTotal": 14.97
+      "description": "BMW Pencil",
+      "unitPrice": 10.0,
+      "discountPrice": 8.0,
+      "qty": 3
     }
   ],
-  "total": 14.97,
-  "discountedTotal": 14.97,
-  "totalProducts": 1,
-  "totalQuantity": 3
+  "totalItemPrices": 30.0,
+  "totalItemDiscounts": 6.0,
+  "createdAt": "2026-07-02T10:00:00.000Z",
+  "updatedAt": "2026-07-02T10:00:00.000Z"
 }
 ```
 
-### GET `/api/carts/:id`
+Each item requires `sku`, `description`, `unitPrice`, `discountPrice` and `qty`
+(positive integer). `discountPrice` must be between `0` and `unitPrice`, and SKUs
+must be unique within the cart.
 
-Get a user's cart with computed totals.
+### GET `/api/users/:id/cart` 🔒
+
+Get the user's cart with its items and stored totals.
 
 ```bash
-curl http://localhost:3000/api/carts/10
+curl http://localhost:3000/api/users/10/cart \
+  -H "Authorization: Bearer <token>"
 ```
 
 **200** → success envelope wrapping the cart object.
+**401** — missing/invalid token · **403** — `:id` is not your own user id · **404** — no cart yet
 
 ---
 
-### PUT `/api/carts/:id`
+### POST `/api/users/:id/cart` 🔒
 
-Replace all items in the cart. Each item needs a product reference
-(`id` or `productId`) and a positive `quantity`.
+Create the user's cart with its items.
 
 ```bash
-curl -X PUT http://localhost:3000/api/carts/10 \
+curl -X POST http://localhost:3000/api/users/10/cart \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{ "products": [ { "productId": 1, "quantity": 3 } ] }'
+  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 3 } ] }'
 ```
 
-**200** → success envelope wrapping the recomputed cart object.
-**400** — invalid items (non-positive quantity, missing product reference)
+**201** → success envelope wrapping the created cart object.
+**409** — a cart already exists (use PUT to replace it)
+**422** — missing/invalid item field, duplicate sku, or `discountPrice` > `unitPrice`
 
 ---
 
-### DELETE `/api/carts/:id`
+### PUT / PATCH `/api/users/:id/cart` 🔒
 
-Clear the cart. Returns the emptied cart.
+Replace the user's cart. The body carries the **full** item set — the items and
+totals are overwritten.
 
 ```bash
-curl -X DELETE http://localhost:3000/api/carts/10
+curl -X PUT http://localhost:3000/api/users/10/cart \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 1 } ] }'
 ```
 
-**200**
+**200** → success envelope wrapping the updated cart object.
+**404** — no cart to replace · **422** — invalid body
+
+---
+
+### DELETE `/api/users/:id/cart` 🔒
+
+Delete the user's cart and its items. Returns the deleted cart.
+
+```bash
+curl -X DELETE http://localhost:3000/api/users/10/cart \
+  -H "Authorization: Bearer <token>"
+```
+
+**200** → success envelope wrapping the deleted cart object.
+**404** — no cart to delete
+
+---
+
+## Wishlists 🔒
+
+A wishlist is a **singleton nested under a user**: `/api/users/:id/wishlist`.
+Each user has **at most one** wishlist. Every route requires a Bearer token, and
+the `:id` in the path **must be the authenticated user's own id** — accessing
+another user's id returns `403`.
+
+The link to the user is by **username** and the link to products is by **sku**
+(not database foreign keys). The API only operates on the whole wishlist — send
+the full parent/child structure; there are no item-level endpoints.
+
+The **wishlist object**:
 
 ```json
 {
-  "success": true,
-  "data": { "id": 1, "userId": 10, "products": [], "total": 0, "discountedTotal": 0, "totalProducts": 0, "totalQuantity": 0 }
+  "id": 5,
+  "name": "Birthday ideas",
+  "username": "walterp",
+  "items": [
+    { "id": 1, "sku": "RCH45Q1A" },
+    { "id": 2, "sku": "BMW-PNC-001" }
+  ],
+  "createdAt": "2026-07-02T10:00:00.000Z",
+  "updatedAt": "2026-07-02T10:00:00.000Z"
 }
 ```
+
+In request bodies, `items` may be a list of bare SKU strings **or** `{ "sku" }`
+objects — they are normalised and de-duplicated. `name` is required.
+
+### GET `/api/users/:id/wishlist` 🔒
+
+Get the user's wishlist with its items.
+
+```bash
+curl http://localhost:3000/api/users/10/wishlist \
+  -H "Authorization: Bearer <token>"
+```
+
+**200** → success envelope wrapping the wishlist object.
+**401** — missing/invalid token · **403** — `:id` is not your own user id · **404** — no wishlist yet
+
+---
+
+### POST `/api/users/:id/wishlist` 🔒
+
+Create the user's wishlist with its items.
+
+```bash
+curl -X POST http://localhost:3000/api/users/10/wishlist \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Birthday ideas", "items": ["RCH45Q1A", "BMW-PNC-001"] }'
+```
+
+**201** → success envelope wrapping the created wishlist object.
+**409** — a wishlist already exists (use PUT to replace it)
+**422** — missing `name` or an item with an empty `sku`
+
+---
+
+### PUT / PATCH `/api/users/:id/wishlist` 🔒
+
+Replace the user's wishlist. The body carries the **full** structure — the name
+and the entire item set are overwritten.
+
+```bash
+curl -X PUT http://localhost:3000/api/users/10/wishlist \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Birthday ideas (updated)", "items": ["RCH45Q1A"] }'
+```
+
+**200** → success envelope wrapping the updated wishlist object.
+**404** — no wishlist to replace · **422** — invalid body
+
+---
+
+### DELETE `/api/users/:id/wishlist` 🔒
+
+Delete the user's wishlist and its items. Returns the deleted wishlist.
+
+```bash
+curl -X DELETE http://localhost:3000/api/users/10/wishlist \
+  -H "Authorization: Bearer <token>"
+```
+
+**200** → success envelope wrapping the deleted wishlist object.
+**404** — no wishlist to delete
 
 ---
 

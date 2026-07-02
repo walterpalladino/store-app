@@ -42,8 +42,13 @@ function WishlistCard({ item }) {
   const { addItem, isInCart } = useCart()
   const [justAdded, setJustAdded] = useState(false)
 
-  const inCart = isInCart(item.id)
+  const inCart = isInCart(item.sku)
   const discountedPrice = item.price * (1 - (item.discountPercentage ?? 0) / 100)
+
+  // Products rebuilt from the SKU-only endpoint have no `id`, so the detail
+  // link is only available when we know it.
+  const canOpen = Boolean(item.id)
+  const openProduct = () => { if (item.id) navigate(`/product/${item.id}`) }
 
   const handleAddToCart = () => {
     addItem(item, 1)
@@ -72,8 +77,8 @@ function WishlistCard({ item }) {
       >
         {/* Image */}
         <Box
-          sx={{ position: 'relative', bgcolor: '#f0ece3', height: 180, overflow: 'hidden', cursor: 'pointer' }}
-          onClick={() => navigate(`/product/${item.id}`)}
+          sx={{ position: 'relative', bgcolor: '#f0ece3', height: 180, overflow: 'hidden', cursor: canOpen ? 'pointer' : 'default' }}
+          onClick={openProduct}
         >
           <CardMedia
             component="img"
@@ -89,7 +94,7 @@ function WishlistCard({ item }) {
           <Tooltip title="Remove from wishlist" placement="top" arrow>
             <IconButton
               size="small"
-              onClick={(e) => { e.stopPropagation(); removeFromWishlist(item.id) }}
+              onClick={(e) => { e.stopPropagation(); removeFromWishlist(item.sku) }}
               sx={{
                 position: 'absolute', top: 8, right: 8,
                 width: 28, height: 28,
@@ -119,11 +124,11 @@ function WishlistCard({ item }) {
             {item.category}
           </Typography>
           <Typography
-            onClick={() => navigate(`/product/${item.id}`)}
+            onClick={openProduct}
             sx={{
               fontFamily: '"Cormorant Garamond", serif',
               fontSize: '0.95rem', fontWeight: 400, lineHeight: 1.3,
-              mt: 0.25, mb: 1, cursor: 'pointer',
+              mt: 0.25, mb: 1, cursor: canOpen ? 'pointer' : 'default',
               '&:hover': { color: 'secondary.dark' },
               transition: 'color 0.2s',
             }}
@@ -166,14 +171,17 @@ function WishlistCard({ item }) {
           >
             {justAdded ? 'Added!' : inCart ? 'In Bag' : 'Add to Bag'}
           </Button>
-          <Tooltip title="View product" arrow>
-            <IconButton
-              size="small"
-              onClick={() => navigate(`/product/${item.id}`)}
-              sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, px: 1 }}
-            >
-              <OpenInNew sx={{ fontSize: 15 }} />
-            </IconButton>
+          <Tooltip title={canOpen ? 'View product' : 'Product link unavailable'} arrow>
+            <span>
+              <IconButton
+                size="small"
+                onClick={openProduct}
+                disabled={!canOpen}
+                sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, px: 1 }}
+              >
+                <OpenInNew sx={{ fontSize: 15 }} />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
       </Card>
@@ -235,7 +243,7 @@ export default function WishlistPanel() {
 
               <Grid container spacing={2.5}>
                 {items.map((item) => (
-                  <Grid item xs={12} sm={6} lg={4} key={item.id}>
+                  <Grid item xs={12} sm={6} lg={4} key={item.sku}>
                     <WishlistCard item={item} />
                   </Grid>
                 ))}

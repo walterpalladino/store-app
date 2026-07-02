@@ -49,7 +49,7 @@ export default function ProductDetailPage() {
   const { isLoggedIn } = useAuth()
   const { addItem, isInCart, getQuantity } = useCart()
   const { isWishlisted, toggleWishlist } = useWishlist()
-  const wishlisted = product ? isWishlisted(product.id) : false
+  const wishlisted = product ? isWishlisted(product.sku) : false
 
   // Navigate back preserving filters
   const backPath = location.state?.from || '/'
@@ -288,7 +288,7 @@ export default function ProductDetailPage() {
                 variant="contained"
                 onClick={handleAddToCart}
                 startIcon={
-                  isInCart(product.id)
+                  isInCart(product.sku)
                     ? <CheckRounded sx={{ fontSize: 18 }} />
                     : <ShoppingBag sx={{ fontSize: 18 }} />
                 }
@@ -297,17 +297,17 @@ export default function ProductDetailPage() {
                 sx={{
                   py: 1.5,
                   fontSize: '0.75rem',
-                  bgcolor: isInCart(product.id) ? 'success.main' : undefined,
+                  bgcolor: isInCart(product.sku) ? 'success.main' : undefined,
                   '&:hover': {
-                    bgcolor: isInCart(product.id) ? '#3a6b48' : undefined,
+                    bgcolor: isInCart(product.sku) ? '#3a6b48' : undefined,
                   },
                   transition: 'background-color 0.3s',
                 }}
               >
                 {product.stock === 0
                   ? 'Out of Stock'
-                  : isInCart(product.id)
-                    ? `In Bag (${getQuantity(product.id)})`
+                  : isInCart(product.sku)
+                    ? `In Bag (${getQuantity(product.sku)})`
                     : 'Add to Bag'}
               </Button>
               <Tooltip title={wishlisted ? 'Remove from wishlist' : 'Save to wishlist'} arrow>

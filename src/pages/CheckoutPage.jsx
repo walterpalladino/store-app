@@ -328,7 +328,7 @@ function OrderItemsList({ items }) {
       {items.map((item, idx) => {
         const unit = item.product.price * (1 - (item.product.discountPercentage ?? 0) / 100)
         return (
-          <Box key={item.product.id} sx={{
+          <Box key={item.product.sku} sx={{
             display: 'flex', alignItems: 'center', gap: 1.5, py: 1.25,
             borderBottom: idx < items.length - 1 ? '1px solid' : 'none',
             borderColor: 'divider',
