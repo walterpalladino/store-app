@@ -70,12 +70,20 @@ export function AuthProvider({ children }) {
       body:    JSON.stringify({ refreshToken: authState.refreshToken }),
     })
     const data = await unwrap(res)
+    // A refresh can "succeed" (2xx) yet return no usable token, or an error
+    // response can slip past unwrap without `success:false`. Read the values
+    // up front and bail loudly — never queue a state updater that closes over
+    // an undefined `data`, since React replays updaters during render and a
+    // throw there crashes the whole AuthProvider subtree.
+    const newAccessToken  = data?.accessToken
+    const newRefreshToken = data?.refreshToken
+    if (!newAccessToken) throw new Error('Session refresh failed')
     setAuthState((prev) => ({
       ...prev,
-      accessToken:  data.accessToken,
-      refreshToken: data.refreshToken,
+      accessToken:  newAccessToken,
+      refreshToken: newRefreshToken ?? prev.refreshToken,
     }))
-    return data.accessToken
+    return newAccessToken
   }, [authState.refreshToken])
 
   // ── Logout ────────────────────────────────────────────────────────────────
@@ -88,7 +96,14 @@ export function AuthProvider({ children }) {
     let token = authState.accessToken
     if (!token) throw new Error('Not authenticated')
 
-    if (isTokenExpired(token)) token = await refreshAccessToken()
+    if (isTokenExpired(token)) {
+      try {
+        token = await refreshAccessToken()
+      } catch {
+        logout()
+        throw new Error('Session expired. Please log in again.')
+      }
+    }
 
     const makeRequest = (t) => fetch(url, {
       ...options,

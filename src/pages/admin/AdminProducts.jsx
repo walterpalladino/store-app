@@ -10,7 +10,7 @@ import {
   SearchOutlined, RefreshOutlined, CloseOutlined,
   InventoryOutlined, TrendingUpOutlined, StarOutlined,
   AddOutlined, EditOutlined, SaveOutlined, LockOutlined,
-  ImageOutlined, DriveFileRenameOutlineOutlined,
+  ImageOutlined, DriveFileRenameOutlineOutlined, AutoFixHighOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
@@ -34,7 +34,11 @@ const EMPTY_FORM = {
   stock: '', category: '', brand: '', sku: '', thumbnail: '',
   weight: '', warrantyInformation: '', returnPolicy: '',
   minimumOrderQuantity: '', availabilityStatus: 'In Stock',
+  size: '', color: '', attr1: '', attr2: '', attr3: '', attr4: '',
 }
+
+// Attributes fed to POST /api/products/sku/generate (only non-empty ones are sent).
+const SKU_ATTR_KEYS = ['category', 'brand', 'size', 'color', 'attr1', 'attr2', 'attr3', 'attr4']
 
 const AVAILABILITY_OPTIONS = ['In Stock', 'Low Stock', 'Out of Stock', 'Discontinued', 'Pre-order']
 
@@ -54,6 +58,12 @@ function formFromProduct(p) {
     returnPolicy:         p.returnPolicy         ?? '',
     minimumOrderQuantity: p.minimumOrderQuantity ?? '',
     availabilityStatus:   p.availabilityStatus   ?? 'In Stock',
+    size:                 p.size                 ?? '',
+    color:                p.color                ?? '',
+    attr1:                p.attr1                ?? '',
+    attr2:                p.attr2                ?? '',
+    attr3:                p.attr3                ?? '',
+    attr4:                p.attr4                ?? '',
   }
 }
 
@@ -179,6 +189,7 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
   const [errors,  setErrors]   = useState({})
   const [saving,  setSaving]   = useState(false)
   const [apiError, setApiError] = useState('')
+  const [genSku,  setGenSku]   = useState(false)
 
   useEffect(() => {
     if (isNew)          setForm({ ...EMPTY_FORM })
@@ -194,6 +205,33 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
     setForm((p) => ({ ...p, [name]: value }))
     setErrors((p) => ({ ...p, [name]: undefined }))
     setApiError('')
+  }
+
+  const handleGenerateSku = async () => {
+    setApiError('')
+    // Collect only the non-empty attributes for the payload.
+    const payload = SKU_ATTR_KEYS.reduce((acc, key) => {
+      const val = typeof form[key] === 'string' ? form[key].trim() : form[key]
+      if (val !== '' && val != null) acc[key] = val
+      return acc
+    }, {})
+    setGenSku(true)
+    try {
+      const res  = await fetch(API.products.skuGenerate, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await unwrap(res)                       // { sku } (throws on success:false)
+      const sku  = data?.sku ?? data?.code ?? data?.generatedSku
+      if (!sku) throw new Error('No SKU was returned by the server.')
+      setForm((p) => ({ ...p, sku }))
+      setErrors((p) => ({ ...p, sku: undefined }))
+    } catch (err) {
+      setApiError(err.message || 'SKU generation failed. Please try again.')
+    } finally {
+      setGenSku(false)
+    }
   }
 
   const handleSubmit = async () => {
@@ -216,6 +254,12 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
         returnPolicy:         form.returnPolicy.trim(),
         minimumOrderQuantity: form.minimumOrderQuantity !== '' ? Number(form.minimumOrderQuantity) : 1,
         availabilityStatus:   form.availabilityStatus,
+        size:                 form.size.trim(),
+        color:                form.color.trim(),
+        attr1:                form.attr1.trim(),
+        attr2:                form.attr2.trim(),
+        attr3:                form.attr3.trim(),
+        attr4:                form.attr4.trim(),
       }
       const url    = isNew ? API.products.add : API.products.byId(product.id)
       const method = isNew ? 'POST' : 'PATCH'
@@ -228,9 +272,14 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
 
   const FIELDS = [
     { name: 'title',                label: 'Product Title *',    type: 'text',   xs: 12, sm: 12 },
-    { name: 'sku',                  label: 'SKU',                type: 'text',   xs: 12, sm: 6  },
     { name: 'category',             label: 'Category *',         type: 'text',   xs: 12, sm: 6  },
     { name: 'brand',                label: 'Brand',              type: 'text',   xs: 12, sm: 6  },
+    { name: 'size',                 label: 'Size',               type: 'text',   xs: 12, sm: 6  },
+    { name: 'color',                label: 'Color',              type: 'text',   xs: 12, sm: 6  },
+    { name: 'attr1',                label: 'Attribute 1',        type: 'text',   xs: 12, sm: 6  },
+    { name: 'attr2',                label: 'Attribute 2',        type: 'text',   xs: 12, sm: 6  },
+    { name: 'attr3',                label: 'Attribute 3',        type: 'text',   xs: 12, sm: 6  },
+    { name: 'attr4',                label: 'Attribute 4',        type: 'text',   xs: 12, sm: 6  },
     { name: 'price',                label: 'List Price ($) *',   type: 'number', xs: 12, sm: 6  },
     { name: 'discountPercentage',   label: 'Discount (%)',       type: 'number', xs: 12, sm: 6, hint: '0–100' },
     { name: 'stock',                label: 'Stock Quantity',     type: 'number', xs: 12, sm: 6  },
@@ -270,6 +319,29 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
         )}
 
         <Grid container spacing={2}>
+          {/* SKU — always manually editable, with a one-click generator */}
+          <Grid item xs={12}>
+            <TextField
+              fullWidth size="small" name="sku" label="SKU"
+              value={form.sku} onChange={handleChange}
+              error={!!errors.sku} helperText={errors.sku ?? 'Edit manually or generate from the attributes below'}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Button
+                      size="small" onClick={handleGenerateSku} disabled={genSku}
+                      startIcon={genSku ? <CircularProgress size={13} sx={{ color: 'inherit' }} /> : <AutoFixHighOutlined sx={{ fontSize: 15 }} />}
+                      sx={{ fontSize: '0.66rem', letterSpacing: '0.05em', whiteSpace: 'nowrap', color: 'secondary.dark', '&:hover': { bgcolor: 'rgba(200,169,110,0.08)' } }}
+                    >
+                      {genSku ? 'Generating…' : 'Generate SKU'}
+                    </Button>
+                  </InputAdornment>
+                ),
+              }}
+              sx={fieldSx}
+            />
+          </Grid>
+
           {FIELDS.map(({ name, label, type, xs, sm, hint }) => (
             <Grid item xs={xs} sm={sm} key={name}>
               <TextField

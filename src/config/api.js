@@ -38,6 +38,7 @@ const API = {
     search:       `${BASE}/api/products/search`,
     byId:         (id)   => `${BASE}/api/products/${id}`,
     bySku:        (sku)  => `${BASE}/api/products/sku/${encodeURIComponent(sku)}`,
+    skuGenerate:  `${BASE}/api/products/sku/generate`,                                       // POST non-empty attrs → { sku }
     add:          `${BASE}/api/products`,
     byCategory:   (slug) => `${BASE}/api/products/category/${encodeURIComponent(slug)}`,
     categories:   `${BASE}/api/products/categories`,                                        // GET list · POST create (ADMIN)
