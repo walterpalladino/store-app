@@ -74,9 +74,10 @@ export function useProduct(id) {
 
   useEffect(() => {
     if (!id) return
+    const controller = new AbortController()
     setLoading(true)
     // Response: { success, data: { ...product } }
-    fetch(API.products.byId(id))
+    fetch(API.products.byId(id), { signal: controller.signal })
       .then((r) => r.json())
       .then((body) => {
         if (body.success === false) throw new Error(body.error?.message || 'Product not found')
@@ -84,10 +85,13 @@ export function useProduct(id) {
         setLoading(false)
       })
       .catch((err) => {
+        if (err.name === 'AbortError') return   // superseded request (id changed / StrictMode remount) — ignore
         logger.error(`Failed to load product ${id}:`, err.message ?? err)
         setError(err.message)
         setLoading(false)
       })
+    // Cancel an in-flight request when the id changes or the component unmounts.
+    return () => controller.abort()
   }, [id])
 
   return { product, loading, error }
