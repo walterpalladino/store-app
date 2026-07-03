@@ -1,4 +1,6 @@
 import API from '../../config/api'
+import { useAuth } from '../../context/AuthContext'
+import logger from '../../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Divider, Button, Fade, Skeleton, Alert,
@@ -53,19 +55,28 @@ const STATUS_STYLES = {
   'delivered':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
   'payment completed':  { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
   'completed':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
+  'paid':               { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
+  'fulfilled':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
   'shipped':            { color: '#5a8fa3', bg: 'rgba(90,143,163,0.12)'   },
   'processing':         { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
   'pending':            { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
+  'pending_payment':    { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
+  'draft':              { color: '#6b6560', bg: 'rgba(107,101,96,0.1)'    },
   'error':              { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
+  'payment_failed':     { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
   'payment could not be processed': { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)' },
   'cancelled':          { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
+  'refunded':           { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
 }
+
+// "pending_payment" → "Pending Payment"
+const prettyStatus = (s) => String(s).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 function statusMeta(tx) {
   if (tx.status) {
-    const key = tx.status.toLowerCase()
+    const key = String(tx.status).toLowerCase()
     const style = STATUS_STYLES[key] ?? { color: '#6b6560', bg: 'rgba(107,101,96,0.1)' }
-    return { label: tx.status, ...style }
+    return { label: prettyStatus(tx.status), ...style }
   }
   // Fallback derived from id when status field absent
   const seed = tx.id % 3
@@ -74,20 +85,78 @@ function statusMeta(tx) {
   return              { label: 'Delivered',   color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    }
 }
 
-// Safe fetch — unwraps { success, data } envelope, returns { data, error }, never throws
+// Read a { data, error } pair from a Response, never throwing.
+// Handles both the success envelope `{ success, data }` and the flat error
+// shape `{ message }` the backend now returns (a non-2xx status is the signal).
+async function readResult(res) {
+  const body = await res.json().catch(() => null)
+  if (!res.ok || body?.success === false) {
+    return { data: null, error: body?.message || body?.error?.message || `HTTP ${res.status}` }
+  }
+  return { data: body?.data ?? body, error: null }
+}
+
+// Safe fetch for public GETs (product thumbnails) — never throws.
 async function safeFetch(url, options = {}) {
   try {
-    const res  = await fetch(url, options)
-    const body = await res.json()
-    // Handle new envelope: { success, data } or { success, error }
-    if (body.success === false) {
-      return { data: null, error: body.error?.message || `HTTP ${res.status}` }
-    }
-    // success:true — data is in body.data
-    return { data: body.data ?? body, error: null }
+    return await readResult(await fetch(url, options))
   } catch (err) {
     return { data: null, error: err.message || 'Network error' }
   }
+}
+
+// Safe fetch for 🔒 endpoints — sends the Bearer token via authFetch.
+async function safeAuthFetch(authFetch, url) {
+  try {
+    return await readResult(await authFetch(url))
+  } catch (err) {
+    return { data: null, error: err.message || 'Network error' }
+  }
+}
+
+// Map an order to the flat line-item shape the UI renders, tolerating both the
+// current backend (`description`/`unitPrice`/`discountPrice`/`qty`, sku-only) and
+// the legacy/demo shape (`title`/`price`/`quantity`/`total`/…).
+function normalizeOrder(o) {
+  const products = (Array.isArray(o?.products) ? o.products : []).map((p, i) => {
+    const price     = p.price ?? p.unitPrice ?? 0
+    const quantity  = p.quantity ?? p.qty ?? 0
+    const discUnit  = p.discountPrice ?? price               // discounted UNIT price
+    const total           = p.total ?? +(price * quantity).toFixed(2)
+    const discountedTotal = p.discountedTotal ?? +(discUnit * quantity).toFixed(2)
+    const discountPercentage = p.discountPercentage
+      ?? (price > 0 ? +(((price - discUnit) / price) * 100).toFixed(2) : 0)
+    return {
+      id: p.id ?? p.productId ?? p.sku ?? i,   // React key + thumbnail lookup
+      sku: p.sku ?? null,
+      title: p.title ?? p.description ?? p.sku ?? 'Item',
+      price, quantity, total, discountedTotal, discountPercentage,
+    }
+  })
+  return {
+    ...o,
+    products,
+    total:           o?.total ?? products.reduce((s, p) => s + p.total, 0),
+    discountedTotal: o?.discountedTotal ?? products.reduce((s, p) => s + p.discountedTotal, 0),
+    totalProducts:   o?.totalProducts ?? products.length,
+    totalQuantity:   o?.totalQuantity ?? products.reduce((s, p) => s + p.quantity, 0),
+  }
+}
+
+// Best-effort product thumbnails, keyed by the line-item `id` used in render.
+// New order lines carry only a `sku`, so prefer the public bySku lookup.
+async function fetchThumbnails(products) {
+  const seen = new Map()   // id -> sku
+  for (const p of products ?? []) if (!seen.has(p.id)) seen.set(p.id, p.sku)
+  const results = await Promise.all(
+    [...seen].map(([id, sku]) =>
+      safeFetch(sku ? API.products.bySku(sku) : API.products.byId(id))
+        .then(({ data: pd }) => (pd?.thumbnail ? [id, pd.thumbnail] : null))
+    )
+  )
+  const map = {}
+  results.forEach((e) => { if (e) map[e[0]] = e[1] })
+  return map
 }
 
 // ---------------------------------------------------------------------------
@@ -143,8 +212,9 @@ function DetailSkeleton() {
 // Transaction list card
 // ---------------------------------------------------------------------------
 function TransactionCard({ tx, thumbnails = {}, onView }) {
-  const status  = statusMeta(tx)
-  const savings = tx.total - tx.discountedTotal
+  const status   = statusMeta(tx)
+  const products = Array.isArray(tx.products) ? tx.products : []
+  const savings  = (tx.total ?? 0) - (tx.discountedTotal ?? 0)
 
   return (
     <Box
@@ -215,7 +285,7 @@ function TransactionCard({ tx, thumbnails = {}, onView }) {
       {/* Body */}
       <Box sx={{ px: 3, py: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          {tx.products.slice(0, 4).map((p) => (
+          {products.slice(0, 4).map((p) => (
             <Tooltip key={p.id} title={`${p.title} × ${p.quantity}`} arrow>
               <Box sx={{
                 width: 42, height: 42, borderRadius: 1.5,
@@ -236,14 +306,14 @@ function TransactionCard({ tx, thumbnails = {}, onView }) {
               </Box>
             </Tooltip>
           ))}
-          {tx.products.length > 4 && (
+          {products.length > 4 && (
             <Box sx={{
               width: 42, height: 42, borderRadius: 1.5,
               bgcolor: 'rgba(26,26,26,0.04)', border: '1px solid rgba(26,26,26,0.08)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', fontWeight: 500 }}>
-                +{tx.products.length - 4}
+                +{products.length - 4}
               </Typography>
             </Box>
           )}
@@ -272,6 +342,7 @@ function TransactionCard({ tx, thumbnails = {}, onView }) {
 // Transaction detail view
 // ---------------------------------------------------------------------------
 function TransactionDetail({ txId, onBack }) {
+  const { authFetch } = useAuth()
   const [tx, setTx]           = useState(null)
   const [thumbnails, setThumbnails] = useState({})
   const [loading, setLoading] = useState(true)
@@ -283,30 +354,24 @@ function TransactionDetail({ txId, onBack }) {
     setError('')
     setUsingFallback(false)
 
-    // GET /api/orders/:id — { success, data: { id, products, ... } }
-    const { data, error: fetchErr } = await safeFetch(API.orders.byId(txId))
+    // GET /api/orders/:id 🔒 — { success, data: { id, products, ... } }
+    const { data, error: fetchErr } = await safeAuthFetch(authFetch, API.orders.byId(txId))
 
-    const txData = (data && typeof data === 'object' && !Array.isArray(data) ? data : null)
+    const raw = (data && typeof data === 'object' && !Array.isArray(data) ? data : null)
       ?? (FALLBACK_TRANSACTIONS.find((t) => t.id === txId) ?? FALLBACK_TRANSACTIONS[0])
     if (!data) {
       setUsingFallback(true)
-      if (fetchErr) setError(`Live API unavailable (${fetchErr}) — showing cached data.`)
+      if (fetchErr) {
+        logger.error(`Purchase history: failed to load order ${txId}:`, fetchErr)
+        setError(`Live API unavailable (${fetchErr}) — showing cached data.`)
+      }
     }
+    const txData = normalizeOrder(raw)
     setTx(txData)
     setLoading(false)
 
-    // Fetch thumbnails for each product in the detail view
-    const ids = txData.products.map((p) => p.productId ?? p.id)
-    const results = await Promise.all(
-      ids.map((id) =>
-        safeFetch(API.products.byId(id))
-          .then(({ data: pd }) => pd ? [id, pd.thumbnail] : null)
-      )
-    )
-    const map = {}
-    results.forEach((entry) => { if (entry) map[entry[0]] = entry[1] })
-    setThumbnails(map)
-  }, [txId])
+    setThumbnails(await fetchThumbnails(txData.products))
+  }, [txId, authFetch])
 
   useEffect(() => { load() }, [load])
 
@@ -379,18 +444,29 @@ function TransactionDetail({ txId, onBack }) {
                 ))}
               </Box>
 
-              {/* Payment row */}
+              {/* Payment row — card details (legacy shape) when present, else
+                  the provider/currency the current backend returns. */}
               {tx.payment && (
                 <Box sx={{ px: 3, py: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
                   <CreditCardOutlined sx={{ fontSize: 16, color: 'secondary.dark' }} />
-                  <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                    Paid with{' '}
-                    <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>{tx.payment.cardType}</Box>
-                    {' '}ending in{' '}
-                    <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 500 }}>{String(tx.payment.cardNumber ?? '').slice(-4)}</Box>
-                    {' '}· Exp <Box component="span" sx={{ fontFamily: 'monospace' }}>{tx.payment.cardExpire}</Box>
-                    {' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box>
-                  </Typography>
+                  {tx.payment.cardNumber ? (
+                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                      Paid with{' '}
+                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>{tx.payment.cardType}</Box>
+                      {' '}ending in{' '}
+                      <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 500 }}>{String(tx.payment.cardNumber).slice(-4)}</Box>
+                      {' '}· Exp <Box component="span" sx={{ fontFamily: 'monospace' }}>{tx.payment.cardExpire}</Box>
+                      {' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box>
+                    </Typography>
+                  ) : (
+                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                      {tx.payment.provider && (
+                        <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, textTransform: 'capitalize' }}>{tx.payment.provider}</Box>
+                      )}
+                      {tx.payment.status && <>{' '}· {prettyStatus(tx.payment.status)}</>}
+                      {tx.payment.currency && <>{' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box></>}
+                    </Typography>
+                  )}
                 </Box>
               )}
             </Box>
@@ -502,6 +578,7 @@ function TransactionDetail({ txId, onBack }) {
 // PurchaseHistoryPanel — top-level export
 // ---------------------------------------------------------------------------
 export function PurchaseHistoryPanel() {
+  const { authFetch } = useAuth()
   const [transactions, setTransactions] = useState([])
   const [thumbnails, setThumbnails]     = useState({})   // { [productId]: url }
   const [loading, setLoading]           = useState(true)
@@ -509,49 +586,37 @@ export function PurchaseHistoryPanel() {
   const [usingFallback, setUsingFallback] = useState(false)
   const [selectedId, setSelectedId]     = useState(null)
 
-  // Fetch thumbnails for all unique product ids across all transactions
-  const loadThumbnails = useCallback(async (txList) => {
-    const ids = [...new Set(txList.flatMap((tx) => tx.products.map((p) => p.productId ?? p.id)))]
-    const results = await Promise.all(
-      ids.map((id) =>
-        safeFetch(API.products.byId(id))
-          .then(({ data: pd }) => pd?.thumbnail ? [id, pd.thumbnail] : null)
-      )
-    )
-    const map = {}
-    results.forEach((entry) => { if (entry) map[entry[0]] = entry[1] })
-    setThumbnails(map)
-  }, [])
-
   const loadList = useCallback(async () => {
     setLoading(true)
     setError('')
     setUsingFallback(false)
 
-    const { data, error: fetchErr } = await safeFetch(API.orders.list)
+    // GET /api/orders 🔒 — { success, data: { orders: [...] } }
+    const { data, error: fetchErr } = await safeAuthFetch(authFetch, API.orders.list)
 
     let list
     if (data) {
-      // Response: { success, data: { orders: [...] } }
-      list = Array.isArray(data.orders)
+      const rows = Array.isArray(data.orders)
         ? data.orders
         : Array.isArray(data.transactions)
           ? data.transactions
           : Array.isArray(data)
             ? data
-            : [data]
+            : []
+      list = rows.map(normalizeOrder)
       setTransactions(list)
     } else {
-      list = FALLBACK_TRANSACTIONS
+      list = FALLBACK_TRANSACTIONS.map(normalizeOrder)
       setTransactions(list)
       setUsingFallback(true)
+      logger.error('Purchase history: failed to load orders:', fetchErr || 'unknown error')
       setError(`Live API unavailable (${fetchErr || 'unknown error'}) — showing demo data.`)
     }
 
     setLoading(false)
-    // Fetch thumbnails in background after list is shown
-    loadThumbnails(list)
-  }, [loadThumbnails])
+    // Fetch thumbnails in background after the list is shown.
+    fetchThumbnails(list.flatMap((tx) => tx.products)).then(setThumbnails)
+  }, [authFetch])
 
   useEffect(() => { loadList() }, [loadList])
 

@@ -100,6 +100,7 @@ invalid token returns **401**.
 | Products | DELETE | `/api/products/categories/:slug`       | 🔒 ADMIN |
 | Products | GET    | `/api/products/category/:category`     | —    |
 | Products | GET    | `/api/products/sku/:sku`               | —    |
+| Products | POST   | `/api/products/sku/generate`           | —    |
 | Products | GET    | `/api/products/:id`                    | —    |
 | Products | PUT    | `/api/products/:id`                    | 🔒 ADMIN |
 | Products | PATCH  | `/api/products/:id`                    | 🔒 ADMIN |
@@ -608,6 +609,27 @@ curl http://localhost:3000/api/products/sku/BMW-PNC-001
 
 ---
 
+### POST `/api/products/sku/generate`
+
+Generate a SKU code from product attributes. The code is the first three
+characters of each supplied attribute, uppercased and joined with `-`, in this
+order: `category`, `brand`, `size`, `color`, `attr1`, `attr2`, `attr3`, `attr4`.
+Attributes that are empty or blank are skipped. All fields are optional strings.
+
+```bash
+curl -X POST http://localhost:3000/api/products/sku/generate \
+  -H "Content-Type: application/json" \
+  -d '{ "category": "electronics", "brand": "Sony", "color": "Black", "attr2": "waterproof" }'
+```
+
+**200**
+
+```json
+{ "success": true, "data": { "sku": "ELE-SON-BLA-WAT" } }
+```
+
+---
+
 ### GET `/api/products/:id`
 
 ```bash
@@ -968,9 +990,9 @@ scoped to the caller. Orders are **created by the checkout flow**
 (`POST /api/checkout`), never from an order request body. This is what fixes the
 front end generating duplicate orders.
 
-**Status lifecycle** (`status`): `New` → `Payment Pending` → `Payment Completed` →
-`Fulfilled`, with `Payment Rejected`, `Canceled` and `Reimbursed` as terminal
-branches. A user may have only **one open order** (`New` or `Payment Pending`) at
+**Status lifecycle** (`status`): `draft` → `pending_payment` → `paid` →
+`fulfilled`, with `payment_failed`, `cancelled` and `refunded` as terminal
+branches. A user may have only **one open order** (`draft` or `pending_payment`) at
 a time.
 
 The **order object**:
@@ -986,7 +1008,7 @@ The **order object**:
   "discountedTotal": 24.0,
   "totalProducts": 1,
   "totalQuantity": 3,
-  "status": "Payment Pending",
+  "status": "pending_payment",
   "address": {},
   "payment": { "provider": "stripe", "sessionId": "cs_test_…", "status": "open", "amountTotal": 2400, "currency": "usd" }
 }
@@ -1029,8 +1051,10 @@ the caller's cart.
 ### POST `/api/checkout` 🔒
 
 Register an order from the caller's cart and start payment. The flow: register the
-order as `New` from the cart snapshot → create a (mock) Stripe **embedded**
-Checkout Session → move the order to `Payment Pending` → clear the cart. The
+order as `draft` from the cart snapshot → create a (mock) Stripe **embedded**
+Checkout Session → clear the cart and move the order to `pending_payment`. If the
+payment processor fails to start a session, the draft order is deleted (so it does
+not linger as an open order) and the error is surfaced. The
 response carries both the order and the checkout session; the front end renders
 the embedded checkout with `checkout.clientSecret` (see the
 [Stripe embedded quickstart](https://docs.stripe.com/checkout/embedded/quickstart?lang=node&client=react)).
@@ -1045,7 +1069,7 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 {
   "success": true,
   "data": {
-    "order": { "id": 5, "status": "Payment Pending", "total": 30.0, "discountedTotal": 24.0, "…": "…" },
+    "order": { "id": 5, "status": "pending_payment", "total": 30.0, "discountedTotal": 24.0, "…": "…" },
     "checkout": {
       "provider": "stripe",
       "sessionId": "cs_test_…",
@@ -1059,12 +1083,50 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 }
 ```
 
-**409** — you already have an open order (`New` / `Payment Pending`)
+**409** — you already have an open order (`draft` / `pending_payment`)
 **422** — your cart is empty (nothing to order)
 
 > **Payment is mocked.** The checkout session is Stripe-shaped but no real Stripe
 > call is made and no keys are required. Swap `PaymentService` for a real Stripe
 > integration without changing callers.
+
+### POST `/api/checkout/webhook`
+
+**Public** (no token) — the payment processor calls this server-to-server to
+report the outcome of a checkout session. It applies the payment result to the
+order:
+
+| `status` in body   | order transitions to | side effect      |
+| ------------------ | -------------------- | ---------------- |
+| `payment_succeeded`| `paid`               | records `paidAt` |
+| `payment_failed`   | `payment_failed`     | —                |
+
+Only an order currently in `pending_payment` can be settled. Re-delivering the
+same event (order already in the target status) is a no-op and still returns
+**200**, so processor retries don't error.
+
+`orderId` identifies the order — a real processor carries it back in the
+session's `metadata.orderId`.
+
+```bash
+curl -X POST http://localhost:3000/api/checkout/webhook \
+  -H "Content-Type: application/json" \
+  -d '{ "orderId": 5, "status": "payment_succeeded" }'
+```
+
+**200** — receipt acknowledgement only (the order update is a side effect):
+
+```json
+{ "received": true }
+```
+
+**404** — no order with that `orderId`
+**409** — the order is not awaiting payment (not in `pending_payment`)
+**422** — `status` is missing or not one of `payment_succeeded` / `payment_failed`
+
+> **Testing shortcut.** The body is simplified to `{ orderId, status }`. A real
+> Stripe integration would instead verify a signed event payload (e.g.
+> `checkout.session.completed`) and read the order id from its metadata.
 
 ---
 

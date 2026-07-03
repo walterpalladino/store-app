@@ -6,9 +6,11 @@ import App from './App'
 import theme from './theme/theme'
 import ErrorBoundary from './components/ErrorBoundary'
 import registerGlobalErrorHandlers from './utils/registerGlobalErrorHandlers'
+import instrumentFetch from './utils/instrumentFetch'
 import logger from './utils/logger'
 
 registerGlobalErrorHandlers()
+instrumentFetch()   // logs every backend call — only when level is "debug"
 logger.info(`Logger initialised at level "${logger.level}"`)
 
 ReactDOM.createRoot(document.getElementById('root')).render(
