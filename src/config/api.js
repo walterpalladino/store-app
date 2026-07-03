@@ -45,19 +45,15 @@ const API = {
     categoryList: `${BASE}/api/products/category-list`,
   },
 
-  // Orders (formerly "transactions" — renamed to match the API contract's REST resource)
+  // Orders are read-only — created only by the checkout flow, never posted directly.
   orders: {
-    list:     `${BASE}/api/orders`,
-    byId:     (id) => `${BASE}/api/orders/${id}`,
-    create:   `${BASE}/api/orders`,
+    list: `${BASE}/api/orders`,
+    byId: (id) => `${BASE}/api/orders/${id}`,
   },
 
-  // Stripe payments — backend-owned (pending). POST creates a Checkout Session /
-  // PaymentIntent; GET returns the settled status for the return page.
-  payments: {
-    createSession: `${BASE}/api/payments/checkout-session`,
-    session:       (id) => `${BASE}/api/payments/session/${id}`,
-  },
+  // Checkout — registers an order from the caller's cart and starts the (mock)
+  // Stripe embedded session. POST, no body. Returns { order, checkout }.
+  checkout: `${BASE}/api/checkout`,
 }
 
 export default API

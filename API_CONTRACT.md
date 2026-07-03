@@ -115,9 +115,9 @@ invalid token returns **401**.
 | Carts    | PUT    | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | PATCH  | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | DELETE | `/api/users/:id/cart`                  | 🔒   |
-| Orders   | GET    | `/api/orders`                          | —    |
-| Orders   | GET    | `/api/orders/:id`                      | —    |
-| Orders   | POST   | `/api/orders`                          | —    |
+| Orders   | GET    | `/api/orders`                          | 🔒   |
+| Orders   | GET    | `/api/orders/:id`                      | 🔒   |
+| Checkout | POST   | `/api/checkout`                        | 🔒   |
 
 ---
 
@@ -961,77 +961,110 @@ curl -X DELETE http://localhost:3000/api/users/10/wishlist \
 
 ---
 
-## Orders
+## Orders 🔒
+
+Orders are a **read-only** resource — every route requires a Bearer token and is
+scoped to the caller. Orders are **created by the checkout flow**
+(`POST /api/checkout`), never from an order request body. This is what fixes the
+front end generating duplicate orders.
+
+**Status lifecycle** (`status`): `New` → `Payment Pending` → `Payment Completed` →
+`Fulfilled`, with `Payment Rejected`, `Canceled` and `Reimbursed` as terminal
+branches. A user may have only **one open order** (`New` or `Payment Pending`) at
+a time.
 
 The **order object**:
 
 ```json
 {
-  "id": 1,
+  "id": 5,
   "userId": 10,
-  "products": [ { "productId": 1, "quantity": 3, "price": 4.99 } ],
-  "total": 14.97,
-  "discountedTotal": 14.97,
+  "products": [
+    { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 3 }
+  ],
+  "total": 30.0,
+  "discountedTotal": 24.0,
   "totalProducts": 1,
   "totalQuantity": 3,
-  "status": "pending",
-  "address": { "city": "Austin", "state": "TX" },
-  "payment": { "method": "card", "status": "authorized" }
+  "status": "Payment Pending",
+  "address": {},
+  "payment": { "provider": "stripe", "sessionId": "cs_test_…", "status": "open", "amountTotal": 2400, "currency": "usd" }
 }
 ```
 
-### GET `/api/orders`
+`total` is the gross item total (Σ `unitPrice` × `qty`); `discountedTotal` is the
+net payable (gross − discounts).
 
-List all orders.
+### GET `/api/orders` 🔒
+
+List the caller's own orders, newest first.
 
 ```bash
-curl http://localhost:3000/api/orders
+curl http://localhost:3000/api/orders -H "Authorization: Bearer <token>"
 ```
 
-**200**
+**200** → `{ success, data: { orders: [ … ] } }`
+
+---
+
+### GET `/api/orders/:id` 🔒
+
+Get one of the caller's orders. Orders belonging to another user return `404`.
+
+```bash
+curl http://localhost:3000/api/orders/5 -H "Authorization: Bearer <token>"
+```
+
+**200** → success envelope wrapping a single order object.
+**404** — not found (or not yours)
+
+---
+
+## Checkout 🔒
+
+Placing an order is a **separate operation** from the orders resource. Checkout
+requires a Bearer token and takes **no request body** — the order is built from
+the caller's cart.
+
+### POST `/api/checkout` 🔒
+
+Register an order from the caller's cart and start payment. The flow: register the
+order as `New` from the cart snapshot → create a (mock) Stripe **embedded**
+Checkout Session → move the order to `Payment Pending` → clear the cart. The
+response carries both the order and the checkout session; the front end renders
+the embedded checkout with `checkout.clientSecret` (see the
+[Stripe embedded quickstart](https://docs.stripe.com/checkout/embedded/quickstart?lang=node&client=react)).
+
+```bash
+curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token>"
+```
+
+**201**
 
 ```json
 {
   "success": true,
-  "data": { "orders": [ { "id": 1, "userId": 10, "status": "pending" } ] }
+  "data": {
+    "order": { "id": 5, "status": "Payment Pending", "total": 30.0, "discountedTotal": 24.0, "…": "…" },
+    "checkout": {
+      "provider": "stripe",
+      "sessionId": "cs_test_…",
+      "clientSecret": "cs_test_…_secret_…",
+      "status": "open",
+      "returnUrl": "http://localhost:5173/checkout/return?session_id={CHECKOUT_SESSION_ID}",
+      "amountTotal": 2400,
+      "currency": "usd"
+    }
+  }
 }
 ```
 
----
+**409** — you already have an open order (`New` / `Payment Pending`)
+**422** — your cart is empty (nothing to order)
 
-### GET `/api/orders/:id`
-
-```bash
-curl http://localhost:3000/api/orders/1
-```
-
-**200** → success envelope wrapping a single order object.
-**404** — not found
-
----
-
-### POST `/api/orders`
-
-Create an order. All fields are optional at the schema level; the service applies
-domain rules.
-
-```bash
-curl -X POST http://localhost:3000/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": 10,
-    "products": [ { "productId": 1, "quantity": 3, "price": 4.99 } ],
-    "total": 14.97,
-    "discountedTotal": 14.97,
-    "totalProducts": 1,
-    "totalQuantity": 3,
-    "status": "pending",
-    "address": { "city": "Austin", "state": "TX" },
-    "payment": { "method": "card" }
-  }'
-```
-
-**200** → success envelope wrapping the created order object.
+> **Payment is mocked.** The checkout session is Stripe-shaped but no real Stripe
+> call is made and no keys are required. Swap `PaymentService` for a real Stripe
+> integration without changing callers.
 
 ---
 
@@ -1042,6 +1075,8 @@ curl -X POST http://localhost:3000/api/orders \
   on 🔒 endpoints; call `POST /api/auth/refresh` when the access token expires.
 - **🔒 ADMIN** endpoints (product and category create/update/delete) require the token's user
   to have the `ADMIN` role — non-admins get **403**, missing/invalid tokens get **401**.
-- Carts are keyed by **user id**, not a separate cart id — use the logged-in user's id.
+- The cart and wishlist are per-user singletons under `/api/users/:id/…`; `:id` must be the
+  logged-in user's own id. Place an order with `POST /api/checkout` (no body) — never post order
+  data directly; `/api/orders` is read-only.
 - CORS allows `GET, POST, PUT, PATCH, DELETE, OPTIONS`. Rate limiting is active; on
   **429** back off using the `error.message` retry hint.

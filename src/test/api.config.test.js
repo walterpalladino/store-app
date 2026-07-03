@@ -59,17 +59,16 @@ describe('API config', () => {
     })
   })
 
-  // ── Payments ─────────────────────────────────────────────────────────────────
-  describe('payments endpoints', () => {
-    it('builds createSession URL', () => expect(API.payments.createSession).toBe('http://localhost:3000/api/payments/checkout-session'))
-    it('builds session URL',       () => expect(API.payments.session('cs_1')).toBe('http://localhost:3000/api/payments/session/cs_1'))
+  // ── Orders (read-only) ─────────────────────────────────────────────────────
+  describe('orders endpoints', () => {
+    it('builds list URL', () => expect(API.orders.list).toBe('http://localhost:3000/api/orders'))
+    it('builds byId URL', () => expect(API.orders.byId(5)).toBe('http://localhost:3000/api/orders/5'))
+    it('has no create URL (orders are read-only)', () => expect(API.orders.create).toBeUndefined())
   })
 
-  // ── Orders ───────────────────────────────────────────────────────────────────
-  describe('orders endpoints', () => {
-    it('builds list URL',   () => expect(API.orders.list).toBe('http://localhost:3000/api/orders'))
-    it('builds create URL', () => expect(API.orders.create).toBe('http://localhost:3000/api/orders'))
-    it('builds byId URL',   () => expect(API.orders.byId(5)).toBe('http://localhost:3000/api/orders/5'))
+  // ── Checkout ───────────────────────────────────────────────────────────────
+  describe('checkout endpoint', () => {
+    it('builds checkout URL', () => expect(API.checkout).toBe('http://localhost:3000/api/checkout'))
   })
 
   // ── Base URL handling ──────────────────────────────────────────────────────
