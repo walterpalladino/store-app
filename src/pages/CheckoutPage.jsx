@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useCart } from '../context/CartContext'
 import { startCheckout } from '../services/checkoutService'
+import logger from '../utils/logger'
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -291,6 +292,7 @@ export default function CheckoutPage() {
       if (!resumed) clearCart()
       navigate('/checkout/payment', { state: { order, checkout } })
     } catch (err) {
+      logger.error('Checkout failed:', err.message ?? err)
       setSubmitError(err.message || 'Could not start checkout. Please try again.')
     } finally {
       setSubmitting(false)

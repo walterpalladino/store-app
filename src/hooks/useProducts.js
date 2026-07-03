@@ -1,5 +1,6 @@
 import API from '../config/api'
 import { unwrap } from '../utils/apiUtils'
+import logger from '../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 
 export function useProducts(filters) {
@@ -35,6 +36,7 @@ export function useProducts(filters) {
       setTotal(filtered.length)
       setProducts(filtered.slice(skip, skip + limit))
     } catch (err) {
+      logger.error('Failed to load products:', err.message ?? err)
       setError(err.message)
     } finally {
       setLoading(false)
@@ -59,7 +61,7 @@ export function useCategories() {
         setCategories(Array.isArray(data) ? data : [])
         setLoading(false)
       })
-      .catch(() => setLoading(false))
+      .catch((err) => { logger.error('Failed to load categories:', err.message ?? err); setLoading(false) })
   }, [])
 
   return { categories, loading }
@@ -82,6 +84,7 @@ export function useProduct(id) {
         setLoading(false)
       })
       .catch((err) => {
+        logger.error(`Failed to load product ${id}:`, err.message ?? err)
         setError(err.message)
         setLoading(false)
       })

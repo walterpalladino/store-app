@@ -1,5 +1,6 @@
 import API from '../config/api'
 import { unwrap } from '../utils/apiUtils'
+import logger from '../utils/logger'
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
 const AuthContext = createContext(null)
@@ -99,7 +100,8 @@ export function AuthProvider({ children }) {
     if (isTokenExpired(token)) {
       try {
         token = await refreshAccessToken()
-      } catch {
+      } catch (err) {
+        logger.warn('authFetch: token refresh failed, logging out.', err.message ?? err)
         logout()
         throw new Error('Session expired. Please log in again.')
       }
@@ -121,7 +123,8 @@ export function AuthProvider({ children }) {
       try {
         token = await refreshAccessToken()
         res   = await makeRequest(token)
-      } catch {
+      } catch (err) {
+        logger.warn('authFetch: refresh after 401 failed, logging out.', err.message ?? err)
         logout()
         throw new Error('Session expired. Please log in again.')
       }

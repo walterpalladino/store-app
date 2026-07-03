@@ -24,8 +24,10 @@ export function isSuccess(status) {
 }
 
 // A user may have only one order in these states at a time; a new checkout is
-// rejected with 409 while one exists.
-const OPEN_ORDER_STATUSES = ['New', 'Payment Pending']
+// rejected with 409 while one exists. Compared case-insensitively — the backend
+// reports `pending_payment` (snake_case), so exact-case matching silently
+// failed to find the open order and the 409 resume path dead-ended.
+const OPEN_ORDER_STATUSES = ['new', 'pending', 'pending_payment', 'payment pending']
 
 /** Rebuild the embedded-session shape PaymentPage needs from a saved order. */
 function checkoutFromOrder(order) {
@@ -48,11 +50,11 @@ export async function getOpenOrder(authFetch) {
   const res = await authFetch(API.orders.list)
   if (!res.ok) return null
   const { orders } = await readData(res)
-  return (orders ?? []).find((o) => OPEN_ORDER_STATUSES.includes(o.status)) ?? null
+  return (orders ?? []).find((o) => OPEN_ORDER_STATUSES.includes(String(o.status).toLowerCase())) ?? null
 }
 
 /**
- * POST /api/checkout — no request body. Returns `{ order, checkout }` where
+ * POST /api/checkout — empty JSON body. Returns `{ order, checkout }` where
  * `checkout` carries the embedded session ({ sessionId, clientSecret,
  * returnUrl, amountTotal, currency, status }).
  *
@@ -63,7 +65,10 @@ export async function getOpenOrder(authFetch) {
  * any other failure.
  */
 export async function startCheckout(authFetch) {
-  const res = await authFetch(API.checkout, { method: 'POST' })
+  // Send an explicit empty JSON body: authFetch always sets
+  // `Content-Type: application/json`, and the backend's body parser 500s on a
+  // JSON content-type with an empty body. `{}` keeps the header honest.
+  const res = await authFetch(API.checkout, { method: 'POST', body: JSON.stringify({}) })
 
   if (res.status === 409) {
     const order = await getOpenOrder(authFetch)

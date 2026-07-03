@@ -9,6 +9,8 @@
  * with the envelope directly.
  */
 
+import logger from './logger'
+
 /**
  * Parse a fetch Response:
  *   - Throws an Error with the backend's error.message on failure
@@ -19,11 +21,14 @@ export async function unwrap(response) {
   try {
     body = await response.json()
   } catch {
+    logger.error(`unwrap: non-JSON response from ${response.url} (${response.status})`)
     throw new Error(`Server error (${response.status})`)
   }
 
   if (body.success === false) {
-    throw new Error(body.error?.message || `Request failed (${response.status})`)
+    const message = body.error?.message || `Request failed (${response.status})`
+    logger.error(`unwrap: API error from ${response.url} (${response.status}):`, message)
+    throw new Error(message)
   }
 
   // 2xx with success:true
@@ -39,6 +44,7 @@ export async function safeUnwrap(response) {
     const data = await unwrap(response)
     return { data, error: null }
   } catch (err) {
+    logger.error('API request failed:', err.message || err)
     return { data: null, error: err.message || 'Unknown error' }
   }
 }
@@ -66,6 +72,7 @@ export async function safeApiFetch(url, options = {}) {
     const data = await apiFetch(url, options)
     return { data, error: null }
   } catch (err) {
+    logger.error('API request failed:', err.message || err)
     return { data: null, error: err.message || 'Unknown error' }
   }
 }

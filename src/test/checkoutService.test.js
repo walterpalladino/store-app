@@ -18,7 +18,7 @@ describe('checkoutService.isSuccess', () => {
 })
 
 describe('checkoutService.startCheckout', () => {
-  it('POSTs to /api/checkout with no body and returns { order, checkout }', async () => {
+  it('POSTs to /api/checkout with an empty JSON body and returns { order, checkout }', async () => {
     const data = {
       order: { id: 5, status: 'Payment Pending' },
       checkout: { sessionId: 'cs_1', clientSecret: 'x', amountTotal: 2400, returnUrl: '/checkout/return' },
@@ -30,7 +30,9 @@ describe('checkoutService.startCheckout', () => {
     const [url, opts] = authFetch.mock.calls[0]
     expect(url).toBe(API.checkout)
     expect(opts.method).toBe('POST')
-    expect(opts.body).toBeUndefined()
+    // Must send a body: authFetch sets Content-Type: application/json, and the
+    // backend 500s on a JSON content-type with an empty body.
+    expect(opts.body).toBe('{}')
   })
 
   it('resumes the existing open order on 409 instead of failing', async () => {
@@ -49,6 +51,20 @@ describe('checkoutService.startCheckout', () => {
     expect(order).toEqual(openOrder)
     expect(checkout).toMatchObject({ sessionId: 'cs_test_9', amountTotal: 182186 })
     expect(authFetch.mock.calls[1][0]).toBe(API.orders.list)
+  })
+
+  it('resumes when the backend reports the snake_case "pending_payment" status', async () => {
+    const openOrder = {
+      id: 8, status: 'pending_payment', discountedTotal: 57.01,
+      payment: { sessionId: 'cs_test_p', amountTotal: 5701, currency: 'usd', status: 'open', returnUrl: '/checkout/return' },
+    }
+    const authFetch = vi.fn()
+      .mockResolvedValueOnce(mockJsonResponse(errEnvelope('You already have an open order'), 409))
+      .mockResolvedValueOnce(mockJsonResponse(okEnvelope({ orders: [openOrder] })))
+
+    const { order, resumed } = await startCheckout(authFetch)
+    expect(resumed).toBe(true)
+    expect(order).toEqual(openOrder)
   })
 
   it('still throws on 409 when no open order can be found', async () => {

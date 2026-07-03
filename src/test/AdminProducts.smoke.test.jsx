@@ -12,7 +12,7 @@ function mockJson(body, status = 200) {
 
 describe('AdminProducts — mount + Generate SKU', () => {
   it('renders the page and the Add drawer without crashing, and generates a SKU', async () => {
-    global.fetch = vi.fn((url, opts) => {
+    global.fetch = vi.fn((url) => {
       if (String(url).includes('/products/sku/generate')) {
         return Promise.resolve(mockJson({ success: true, data: { sku: 'GEN-ABC-123' } }))
       }

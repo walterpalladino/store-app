@@ -14,6 +14,7 @@ import {
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
+import logger from '../../utils/logger'
 
 const PAGE_SIZE = 15
 
@@ -416,7 +417,7 @@ export default function AdminProducts() {
     fetch(API.products.categories)
       .then((r) => r.json())
       .then((body) => { const d = body.success ? body.data : body; setCategories(Array.isArray(d) ? d : []) })
-      .catch(() => {})
+      .catch((err) => logger.error('Failed to load categories:', err.message ?? err))
   }, [])
 
   const loadProducts = useCallback(async () => {
