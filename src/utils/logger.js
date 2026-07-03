@@ -14,6 +14,10 @@
  *
  * If the variable is unset we default to `debug` in dev and `error` in a
  * production build, so real errors are always surfaced.
+ *
+ * Set `VITE_LOG_TO_SERVER=true` to ALSO mirror every printed line to the
+ * dev-server terminal (via vite-plugin-terminal), so logs show up in the
+ * console where `npm run dev` runs, not just the browser DevTools.
  */
 
 export const LEVELS = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 }
@@ -27,13 +31,32 @@ function resolveLevel() {
 const activeLevel = resolveLevel()
 const threshold = LEVELS[activeLevel]
 
-// console method per level (error/warn have dedicated methods; the rest use log)
-const METHOD = { error: 'error', warn: 'warn', info: 'info', debug: 'debug' }
+// Mirror to the dev-server terminal only in a real dev server — never under
+// test (the terminal bridge POSTs via fetch, which breaks jsdom + fetch spies)
+// and never in a production build.
+const LOG_TO_SERVER =
+  /^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_LOG_TO_SERVER ?? '').trim()) &&
+  import.meta.env.DEV &&
+  import.meta.env.MODE !== 'test'
+
+// console method per level. NB: debug uses console.log, not console.debug —
+// console.debug is filed under DevTools' "Verbose" level, which the default
+// console filter HIDES, so debug logs would appear to be missing.
+const METHOD = { error: 'error', warn: 'warn', info: 'info', debug: 'log' }
+
+// Lazily loaded terminal bridge — only pulled in when server logging is on.
+let serverLogP = null
+function forwardToServer(level, prefix, args) {
+  if (!LOG_TO_SERVER) return
+  if (!serverLogP) serverLogP = import('./serverLog.js').then((m) => m.default).catch(() => null)
+  serverLogP.then((fn) => { if (fn) { try { fn(level, prefix, args) } catch { /* ignore */ } } })
+}
 
 function emit(level, args) {
   if (LEVELS[level] > threshold) return
-  const ts = new Date().toISOString()
-  ;(console[METHOD[level]] ?? console.log)(`${ts} [${level.toUpperCase()}]`, ...args)
+  const prefix = `${new Date().toISOString()} [${level.toUpperCase()}]`
+  ;(console[METHOD[level]] ?? console.log)(prefix, ...args)
+  forwardToServer(level, prefix, args)
 }
 
 const logger = {

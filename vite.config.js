@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import terminal from 'vite-plugin-terminal'
 
 export default defineConfig({
-  plugins: [react()],
+  // `terminal` exposes `virtual:terminal`, letting the client logger mirror
+  // output to the dev-server terminal (gated by VITE_LOG_TO_SERVER). In a
+  // production build the plugin strips the calls to a no-op.
+  plugins: [react(), terminal({ output: ['terminal'] })],
 
   test: {
     environment:  'jsdom',
