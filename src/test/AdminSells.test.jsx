@@ -51,8 +51,9 @@ describe('AdminSells — error handling', () => {
     // productId/quantity/price — no title, discountedTotal, or discountPercentage.
     const orders = [{
       id: 7,
-      products: [{ productId: 1, quantity: 2, price: 10 }],
-      total: 20, discountedTotal: 20, totalProducts: 1, totalQuantity: 2,
+      // Money is integer cents per the API contract ($10 → 1000, $20 → 2000).
+      products: [{ productId: 1, quantity: 2, price: 1000 }],
+      total: 2000, discountedTotal: 2000, totalProducts: 1, totalQuantity: 2,
       status: 'Delivered',
       payment: { method: 'card', status: 'authorized' },
     }]

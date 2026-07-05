@@ -44,10 +44,11 @@ describe('useProducts', () => {
   })
 
   it('filters products by price range client-side', async () => {
+    // API prices are integer cents ($5 → 500); the min/max filter is in dollars.
     const products = [
-      makeProduct({ id: 1, price: 5 }),
-      makeProduct({ id: 2, price: 50 }),
-      makeProduct({ id: 3, price: 500 }),
+      makeProduct({ id: 1, price: 500 }),
+      makeProduct({ id: 2, price: 5000 }),
+      makeProduct({ id: 3, price: 50000 }),
     ]
     mockFetch(okEnvelope(makeProductsResponse(products, 3)))
 
@@ -55,9 +56,10 @@ describe('useProducts', () => {
     const { result } = renderHook(() => useProducts(filters))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
-    // Only product id:2 (price:50) falls in 10–100 range
+    // Only product id:2 ($50) falls in the $10–$100 range
     expect(result.current.products).toHaveLength(1)
     expect(result.current.products[0].id).toBe(2)
+    expect(result.current.products[0].price).toBe(50)   // cents → dollars at the edge
     expect(result.current.total).toBe(1)
   })
 

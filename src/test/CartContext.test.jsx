@@ -49,13 +49,15 @@ describe('CartContext — logged in', () => {
   })
 
   it('hydrates the cart by refetching products by SKU', async () => {
+    // API money is in integer cents: $10.00 → 1000. Display values below are
+    // asserted in decimal units (subtotal 20 = 2 × $10).
     loginAs(makeAuthFetch({
       get: () => mockJsonResponse(okEnvelope({
-        items: [{ sku: 'A', description: 'Widget', unitPrice: 10, discountPrice: 10, qty: 2 }],
+        items: [{ sku: 'A', description: 'Widget', unitPrice: 1000, discountPrice: 1000, qty: 2 }],
       })),
     }))
     global.fetch = vi.fn().mockResolvedValue(
-      mockJsonResponse(okEnvelope({ sku: 'A', title: 'Widget', price: 10, discountPercentage: 0, thumbnail: 't', category: 'c' })),
+      mockJsonResponse(okEnvelope({ sku: 'A', title: 'Widget', price: 1000, discountPercentage: 0, thumbnail: 't', category: 'c' })),
     )
 
     const { result } = renderHook(() => useCart(), { wrapper })
@@ -69,11 +71,11 @@ describe('CartContext — logged in', () => {
   it('falls back to the snapshot SKU when the refetched product omits it', async () => {
     loginAs(makeAuthFetch({
       get: () => mockJsonResponse(okEnvelope({
-        items: [{ sku: 'A', description: 'W', unitPrice: 10, discountPrice: 10, qty: 1 }],
+        items: [{ sku: 'A', description: 'W', unitPrice: 1000, discountPrice: 1000, qty: 1 }],
       })),
     }))
     // Refetched product has no `sku` field → context uses the snapshot's.
-    global.fetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope({ title: 'W', price: 10 })))
+    global.fetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope({ title: 'W', price: 1000 })))
     const { result } = renderHook(() => useCart(), { wrapper })
     await waitFor(() => expect(result.current.totalQuantity).toBe(1))
     expect(result.current.isInCart('A')).toBe(true)
@@ -92,7 +94,8 @@ describe('CartContext — logged in', () => {
     const write = authFetch.mock.calls.find(([, o]) => o && o.method && o.method !== 'GET')
     expect(write).toBeTruthy()
     const body = JSON.parse(write[1].body)
-    expect(body.items[0]).toMatchObject({ sku: 'A', unitPrice: 10, discountPrice: 8, qty: 2 })
+    // Persisted snapshot is in integer cents: $10 → 1000, 20% off → 800.
+    expect(body.items[0]).toMatchObject({ sku: 'A', unitPrice: 1000, discountPrice: 800, qty: 2 })
   })
 
   it('ignores a product without a SKU and defaults quantity to 1', async () => {
@@ -190,15 +193,16 @@ describe('CartContext — logged in', () => {
   it('rebuilds a display item from the snapshot when the product refetch fails', async () => {
     loginAs(makeAuthFetch({
       get: () => mockJsonResponse(okEnvelope({
-        items: [{ sku: 'A', description: 'Ghost Widget', unitPrice: 10, discountPrice: 8, qty: 1 }],
+        items: [{ sku: 'A', description: 'Ghost Widget', unitPrice: 1000, discountPrice: 800, qty: 1 }],
       })),
     }))
     global.fetch = vi.fn().mockRejectedValue(new Error('network')) // refetch throws
     const { result } = renderHook(() => useCart(), { wrapper })
     await waitFor(() => expect(result.current.totalQuantity).toBe(1))
 
+    // Snapshot cents → units: $10 list price on the rebuilt display item.
     expect(result.current.items[0].product).toMatchObject({ sku: 'A', title: 'Ghost Widget', price: 10 })
-    // discountPercentage derived from unit/discount price: (1 - 8/10) * 100 = 20
+    // discountPercentage derived from unit/discount price: (1 - 800/1000) * 100 = 20
     expect(result.current.items[0].product.discountPercentage).toBeCloseTo(20)
   })
 

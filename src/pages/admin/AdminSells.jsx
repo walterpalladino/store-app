@@ -10,6 +10,7 @@ import {
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
+import { orderFromCents } from '../../utils/money'
 
 // Reuse the same safe fetch + fallback from PurchaseHistoryPanel
 const FALLBACK = [{
@@ -80,9 +81,11 @@ export default function AdminSells() {
     try {
       const res  = await fetch(API.orders.list)
       const data = await unwrap(res)  // { orders: [...] }
-      const list = Array.isArray(data.orders) ? data.orders
+      const rows = Array.isArray(data.orders) ? data.orders
         : Array.isArray(data.transactions) ? data.transactions
         : Array.isArray(data) ? data : [data]
+      // Live orders carry money as integer cents — convert to units for display.
+      const list = rows.map(orderFromCents)
       setTransactions(list)
       // Load thumbnails in background — each product endpoint now { success, data: {...} }
       const ids = [...new Set(list.flatMap((tx) => tx.products.map((p) => p.productId ?? p.id)))]

@@ -57,6 +57,18 @@ The **rate-limit** error is the one exception to the flat shape:
 }
 ```
 
+### Money & amounts
+
+All monetary values are **integers in the smallest currency unit (cents)** — never
+decimal dollars. A `price` of `499` means `$4.99`; `unitPrice`, `discountPrice`,
+`totalItemPrices`, `totalItemDiscounts`, `total`, `discountedTotal` and Stripe's
+`amountTotal` are all integer cents. Requests must send these fields as integers;
+a fractional value (e.g. `4.99`) is rejected as a validation error.
+
+`discountPercentage` is a **whole-number integer percent** (e.g. `15` = 15%). A
+discount amount is derived as `floor(price * discountPercentage / 100)` — the
+integer part only — so it never grants a fractional cent.
+
 ### Authentication
 
 Protected endpoints require an HTTP header:
@@ -373,7 +385,7 @@ The **product object** returned by most endpoints:
   "title": "BMW Pencil",
   "description": "A premium writing instrument",
   "category": "stationery",
-  "price": 4.99,
+  "price": 499,
   "discountPercentage": 0,
   "rating": 4.5,
   "stock": 100,
@@ -445,7 +457,7 @@ curl -X POST http://localhost:3000/api/products \
   -H "Content-Type: application/json" \
   -d '{
     "title": "BMW Pencil",
-    "price": 4.99,
+    "price": 499,
     "category": "stationery",
     "description": "A premium writing instrument",
     "stock": 100,
@@ -650,7 +662,7 @@ the fields to change). Requires an authenticated ADMIN.
 curl -X PATCH http://localhost:3000/api/products/1 \
   -H "Authorization: Bearer <accessToken>" \
   -H "Content-Type: application/json" \
-  -d '{ "price": 5.49, "stock": 80 }'
+  -d '{ "price": 549, "stock": 80 }'
 ```
 
 **200** → success envelope wrapping the updated product object.
@@ -813,21 +825,22 @@ The **cart object**:
       "id": 1,
       "sku": "BMW-PNC-001",
       "description": "BMW Pencil",
-      "unitPrice": 10.0,
-      "discountPrice": 8.0,
+      "unitPrice": 1000,
+      "discountPrice": 800,
       "qty": 3
     }
   ],
-  "totalItemPrices": 30.0,
-  "totalItemDiscounts": 6.0,
+  "totalItemPrices": 3000,
+  "totalItemDiscounts": 600,
   "createdAt": "2026-07-02T10:00:00.000Z",
   "updatedAt": "2026-07-02T10:00:00.000Z"
 }
 ```
 
 Each item requires `sku`, `description`, `unitPrice`, `discountPrice` and `qty`
-(positive integer). `discountPrice` must be between `0` and `unitPrice`, and SKUs
-must be unique within the cart.
+(all positive integers; prices are integer cents — see **Money & amounts**).
+`discountPrice` must be between `0` and `unitPrice`, and SKUs must be unique
+within the cart.
 
 ### GET `/api/users/:id/cart` 🔒
 
@@ -851,7 +864,7 @@ Create the user's cart with its items.
 curl -X POST http://localhost:3000/api/users/10/cart \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 3 } ] }'
+  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 1000, "discountPrice": 800, "qty": 3 } ] }'
 ```
 
 **201** → success envelope wrapping the created cart object.
@@ -869,7 +882,7 @@ totals are overwritten.
 curl -X PUT http://localhost:3000/api/users/10/cart \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 1 } ] }'
+  -d '{ "items": [ { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 1000, "discountPrice": 800, "qty": 1 } ] }'
 ```
 
 **200** → success envelope wrapping the updated cart object.
@@ -1002,20 +1015,36 @@ The **order object**:
   "id": 5,
   "userId": 10,
   "products": [
-    { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 10.0, "discountPrice": 8.0, "qty": 3 }
+    { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 1000, "discountPrice": 800, "qty": 3 }
   ],
-  "total": 30.0,
-  "discountedTotal": 24.0,
+  "total": 3000,
+  "discountedTotal": 2400,
   "totalProducts": 1,
   "totalQuantity": 3,
   "status": "pending_payment",
+  "currency": "usd",
   "address": {},
-  "payment": { "provider": "stripe", "sessionId": "cs_test_…", "status": "open", "amountTotal": 2400, "currency": "usd" }
+  "payment": { "provider": "stripe", "sessionId": "cs_test_…", "status": "open", "amountTotal": 2400, "currency": "usd" },
+  "paidOn": null,
+  "amountRefunded": 0,
+  "refundStatus": "none",
+  "refundedOn": null
 }
 ```
 
 `total` is the gross item total (Σ `unitPrice` × `qty`); `discountedTotal` is the
-net payable (gross − discounts).
+net payable (gross − discounts). All amounts are integer cents; `amountTotal` in
+the payment summary equals `discountedTotal` (Stripe's smallest-unit amount).
+
+- `currency` — ISO 4217 currency the order is priced/charged in (the system
+  currency, from the `CURRENCY` env var; defaults to `usd`).
+- `paidOn` — timestamp set when Stripe confirms the payment; `null` until then.
+- `amountRefunded` (cents), `refundStatus` (`none` until a refund is issued) and
+  `refundedOn` are **reserved for a later refund implementation** — new orders
+  return `0` / `"none"` / `null`.
+
+The Stripe identifiers `paymentId` and `paymentIntent` are stored server-side only
+and are **never** returned by the API.
 
 ### GET `/api/orders` 🔒
 
@@ -1051,13 +1080,14 @@ the caller's cart.
 ### POST `/api/checkout` 🔒
 
 Register an order from the caller's cart and start payment. The flow: register the
-order as `draft` from the cart snapshot → create a (mock) Stripe **embedded**
-Checkout Session → clear the cart and move the order to `pending_payment`. If the
+order as `draft` from the cart snapshot → create a Stripe **embedded** Checkout
+Session → clear the cart and move the order to `pending_payment`. If the
 payment processor fails to start a session, the draft order is deleted (so it does
 not linger as an open order) and the error is surfaced. The
 response carries both the order and the checkout session; the front end renders
 the embedded checkout with `checkout.clientSecret` (see the
 [Stripe embedded quickstart](https://docs.stripe.com/checkout/embedded/quickstart?lang=node&client=react)).
+Full flow and payment-platform details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
 ```bash
 curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token>"
@@ -1069,7 +1099,7 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 {
   "success": true,
   "data": {
-    "order": { "id": 5, "status": "pending_payment", "total": 30.0, "discountedTotal": 24.0, "…": "…" },
+    "order": { "id": 5, "status": "pending_payment", "total": 3000, "discountedTotal": 2400, "…": "…" },
     "checkout": {
       "provider": "stripe",
       "sessionId": "cs_test_…",
@@ -1086,32 +1116,33 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 **409** — you already have an open order (`draft` / `pending_payment`)
 **422** — your cart is empty (nothing to order)
 
-> **Payment is mocked.** The checkout session is Stripe-shaped but no real Stripe
-> call is made and no keys are required. Swap `PaymentService` for a real Stripe
-> integration without changing callers.
+> **Real or mock Stripe.** When `STRIPE_SECRET_KEY` is set the session is created
+> via the real Stripe API (`StripeService`); when it is empty a Stripe-shaped
+> mock (`PaymentService`) is used instead — no keys or network required. Both
+> implement the same interface, so callers are identical. See `CONFIGURATION.md`.
 
 ### POST `/api/checkout/webhook`
 
-**Public** (no token) — the payment processor calls this server-to-server to
-report the outcome of a checkout session. It applies the payment result to the
-order:
+**Public** (no token) — Stripe calls this server-to-server to report the outcome
+of a checkout session. The request is verified by **signature** (the raw body is
+checked against the `stripe-signature` header using `STRIPE_WEBHOOK_SECRET`), and
+the order id is read from the session's `metadata.orderId`. Stripe events map to
+order transitions as:
 
-| `status` in body   | order transitions to | side effect      |
-| ------------------ | -------------------- | ---------------- |
-| `payment_succeeded`| `paid`               | records `paidAt` |
-| `payment_failed`   | `payment_failed`     | —                |
+| Stripe event | order transitions to | side effect |
+| --- | --- | --- |
+| `checkout.session.completed` / `async_payment_succeeded` | `paid` | records `paidOn` |
+| `checkout.session.async_payment_failed` / `expired` | `payment_failed` | — |
+| *(any other event)* | unchanged | acknowledged and ignored |
 
 Only an order currently in `pending_payment` can be settled. Re-delivering the
 same event (order already in the target status) is a no-op and still returns
-**200**, so processor retries don't error.
-
-`orderId` identifies the order — a real processor carries it back in the
-session's `metadata.orderId`.
+**200**, so Stripe's retries don't error.
 
 ```bash
-curl -X POST http://localhost:3000/api/checkout/webhook \
-  -H "Content-Type: application/json" \
-  -d '{ "orderId": 5, "status": "payment_succeeded" }'
+# Real Stripe: send a signed event (use the Stripe CLI to forward + sign)
+stripe listen --forward-to localhost:3000/api/checkout/webhook
+stripe trigger checkout.session.completed
 ```
 
 **200** — receipt acknowledgement only (the order update is a side effect):
@@ -1120,13 +1151,14 @@ curl -X POST http://localhost:3000/api/checkout/webhook \
 { "received": true }
 ```
 
-**404** — no order with that `orderId`
+**404** — no order for the event's `orderId`
 **409** — the order is not awaiting payment (not in `pending_payment`)
-**422** — `status` is missing or not one of `payment_succeeded` / `payment_failed`
+**422** — signature verification failed / unsupported event
 
-> **Testing shortcut.** The body is simplified to `{ orderId, status }`. A real
-> Stripe integration would instead verify a signed event payload (e.g.
-> `checkout.session.completed`) and read the order id from its metadata.
+> **Mock mode** (`STRIPE_SECRET_KEY` unset) — the mock processor skips signature
+> verification and accepts a plain JSON body `{ "orderId": 5, "status":
+> "payment_succeeded" | "payment_failed" }`, which is how the test suite drives
+> the webhook. Full details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
 ---
 

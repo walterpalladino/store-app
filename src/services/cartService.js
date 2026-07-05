@@ -1,5 +1,6 @@
 import API from '../config/api'
 import { readError, readData } from './httpEnvelope'
+import { cartFromCents, unitsToCents } from '../utils/money'
 
 // ---------------------------------------------------------------------------
 // cartService — backend CRUD for the per-user cart singleton
@@ -10,16 +11,19 @@ import { readError, readData } from './httpEnvelope'
 
 /**
  * Build the denormalised cart-item snapshot the API expects from a product +
- * quantity. `discountPrice` is the discounted unit price, clamped to unitPrice.
+ * quantity. Prices are sent as **integer cents** (see API_CONTRACT "Money &
+ * amounts"); `discountPrice` is the discounted unit price, clamped to unitPrice.
  */
 export function toCartItem(product, qty) {
-  const unitPrice = Number(product.price) || 0
-  const discountPrice = +(unitPrice * (1 - (product.discountPercentage ?? 0) / 100)).toFixed(2)
+  const unit = Number(product.price) || 0                              // decimal units
+  const discountedUnit = unit * (1 - (product.discountPercentage ?? 0) / 100)
+  const unitPrice = unitsToCents(unit)                                 // integer cents
+  const discountPrice = Math.min(Math.max(unitsToCents(discountedUnit), 0), unitPrice)
   return {
     sku:           product.sku,
     description:   product.title ?? product.description ?? product.sku,
     unitPrice,
-    discountPrice: Math.min(Math.max(discountPrice, 0), unitPrice),
+    discountPrice,
     qty,
   }
 }
@@ -29,7 +33,7 @@ export async function fetchCart(authFetch, userId) {
   const res = await authFetch(API.users.cart(userId))
   if (res.status === 404) return null
   if (!res.ok) throw new Error(await readError(res))
-  return readData(res)
+  return cartFromCents(await readData(res))   // item/total prices cents → units
 }
 
 /**

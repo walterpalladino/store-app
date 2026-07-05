@@ -1,5 +1,6 @@
 import API from '../config/api'
 import { readError, readData } from './httpEnvelope'
+import { orderFromCents, checkoutFromCents } from '../utils/money'
 
 // ---------------------------------------------------------------------------
 // checkoutService — places an order via POST /api/checkout.
@@ -50,7 +51,8 @@ export async function getOpenOrder(authFetch) {
   const res = await authFetch(API.orders.list)
   if (!res.ok) return null
   const { orders } = await readData(res)
-  return (orders ?? []).find((o) => OPEN_ORDER_STATUSES.includes(String(o.status).toLowerCase())) ?? null
+  const open = (orders ?? []).find((o) => OPEN_ORDER_STATUSES.includes(String(o.status).toLowerCase()))
+  return open ? orderFromCents(open) : null   // money fields cents → units
 }
 
 /**
@@ -71,10 +73,14 @@ export async function startCheckout(authFetch) {
   const res = await authFetch(API.checkout, { method: 'POST', body: JSON.stringify({}) })
 
   if (res.status === 409) {
+    // getOpenOrder already returns an order in decimal units, so the session
+    // rebuilt from it is in units too — no further conversion here.
     const order = await getOpenOrder(authFetch)
     if (order) return { order, checkout: checkoutFromOrder(order), resumed: true }
   }
 
   if (!res.ok) throw new Error(await readError(res))
-  return readData(res)
+  const data = await readData(res)
+  // Order totals and the checkout session amount arrive as integer cents.
+  return { ...data, order: orderFromCents(data.order), checkout: checkoutFromCents(data.checkout) }
 }

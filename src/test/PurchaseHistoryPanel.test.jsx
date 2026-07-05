@@ -15,12 +15,13 @@ vi.mock('../context/AuthContext', () => ({
 const NEW_ORDER = {
   id: 9,
   userId: 1,
+  // Money is integer cents per the API contract ($8.99 → 899).
   products: [
-    { sku: 'BEA-NAI-NAI-005', description: 'Red Nail Polish', unitPrice: 8.99, discountPrice: 7.96, qty: 1 },
-    { sku: 'FRA-CHA-CHA-007', description: 'Chanel Coco Noir', unitPrice: 129.99, discountPrice: 108.53, qty: 1 },
+    { sku: 'BEA-NAI-NAI-005', description: 'Red Nail Polish', unitPrice: 899, discountPrice: 796, qty: 1 },
+    { sku: 'FRA-CHA-CHA-007', description: 'Chanel Coco Noir', unitPrice: 12999, discountPrice: 10853, qty: 1 },
   ],
-  total: 138.98,
-  discountedTotal: 116.49,
+  total: 13898,
+  discountedTotal: 11649,
   totalProducts: 2,
   totalQuantity: 2,
   status: 'pending_payment',

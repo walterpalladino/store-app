@@ -1,5 +1,6 @@
 import API from '../config/api'
 import { unwrap } from '../utils/apiUtils'
+import { productFromCents } from '../utils/money'
 import logger from '../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 
@@ -29,7 +30,10 @@ export function useProducts(filters) {
       // Response: { success, data: { products: [...], total, skip, limit } }
       const data = await unwrap(res)
 
-      const filtered = data.products.filter(
+      // Prices arrive as integer cents — convert to currency units at the edge
+      // so the price filter and every downstream page work in decimal dollars.
+      const normalized = data.products.map(productFromCents)
+      const filtered = normalized.filter(
         (p) => p.price >= minPrice && p.price <= maxPrice
       )
 
@@ -81,7 +85,7 @@ export function useProduct(id) {
       .then((r) => r.json())
       .then((body) => {
         if (body.success === false) throw new Error(body.error?.message || 'Product not found')
-        setProduct(body.data ?? body)   // data field or root for compatibility
+        setProduct(productFromCents(body.data ?? body))   // cents → units; data field or root for compatibility
         setLoading(false)
       })
       .catch((err) => {

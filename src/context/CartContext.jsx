@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useMemo } 
 import { useAuth } from './AuthContext'
 import API from '../config/api'
 import { fetchCart, saveCart, toCartItem } from '../services/cartService'
+import { productFromCents } from '../utils/money'
 
 const CartContext = createContext(null)
 
@@ -11,7 +12,7 @@ async function fetchProductBySku(sku) {
     const res = await fetch(API.products.bySku(sku))
     if (!res.ok) return null
     const body = await res.json()
-    return body?.data ?? body
+    return productFromCents(body?.data ?? body)   // price cents → units
   } catch {
     return null
   }

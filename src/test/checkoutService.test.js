@@ -19,6 +19,7 @@ describe('checkoutService.isSuccess', () => {
 
 describe('checkoutService.startCheckout', () => {
   it('POSTs to /api/checkout with an empty JSON body and returns { order, checkout }', async () => {
+    // The API returns money in integer cents; startCheckout converts to units.
     const data = {
       order: { id: 5, status: 'Payment Pending' },
       checkout: { sessionId: 'cs_1', clientSecret: 'x', amountTotal: 2400, returnUrl: '/checkout/return' },
@@ -26,7 +27,8 @@ describe('checkoutService.startCheckout', () => {
     const authFetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope(data), 201))
 
     const res = await startCheckout(authFetch)
-    expect(res).toEqual(data)
+    expect(res.order).toMatchObject({ id: 5, status: 'Payment Pending' })
+    expect(res.checkout).toMatchObject({ sessionId: 'cs_1', clientSecret: 'x', amountTotal: 24, returnUrl: '/checkout/return' })
     const [url, opts] = authFetch.mock.calls[0]
     expect(url).toBe(API.checkout)
     expect(opts.method).toBe('POST')
@@ -36,8 +38,10 @@ describe('checkoutService.startCheckout', () => {
   })
 
   it('resumes the existing open order on 409 instead of failing', async () => {
+    // Money is integer cents on the wire ($1821.86 → 182186); the resumed order
+    // and its rebuilt session are handed back in decimal units.
     const openOrder = {
-      id: 7, status: 'Payment Pending', discountedTotal: 1821.86,
+      id: 7, status: 'Payment Pending', discountedTotal: 182186,
       payment: { sessionId: 'cs_test_9', amountTotal: 182186, currency: 'usd', status: 'open', returnUrl: '/checkout/return' },
     }
     const authFetch = vi.fn()
@@ -48,14 +52,14 @@ describe('checkoutService.startCheckout', () => {
 
     const { order, checkout, resumed } = await startCheckout(authFetch)
     expect(resumed).toBe(true)
-    expect(order).toEqual(openOrder)
-    expect(checkout).toMatchObject({ sessionId: 'cs_test_9', amountTotal: 182186 })
+    expect(order).toMatchObject({ id: 7, status: 'Payment Pending', discountedTotal: 1821.86 })
+    expect(checkout).toMatchObject({ sessionId: 'cs_test_9', amountTotal: 1821.86 })
     expect(authFetch.mock.calls[1][0]).toBe(API.orders.list)
   })
 
   it('resumes when the backend reports the snake_case "pending_payment" status', async () => {
     const openOrder = {
-      id: 8, status: 'pending_payment', discountedTotal: 57.01,
+      id: 8, status: 'pending_payment', discountedTotal: 5701,   // integer cents ($57.01)
       payment: { sessionId: 'cs_test_p', amountTotal: 5701, currency: 'usd', status: 'open', returnUrl: '/checkout/return' },
     }
     const authFetch = vi.fn()
@@ -64,7 +68,7 @@ describe('checkoutService.startCheckout', () => {
 
     const { order, resumed } = await startCheckout(authFetch)
     expect(resumed).toBe(true)
-    expect(order).toEqual(openOrder)
+    expect(order).toMatchObject({ id: 8, status: 'pending_payment', discountedTotal: 57.01 })
   })
 
   it('still throws on 409 when no open order can be found', async () => {

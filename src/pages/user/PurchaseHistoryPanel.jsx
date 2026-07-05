@@ -1,5 +1,6 @@
 import API from '../../config/api'
 import { useAuth } from '../../context/AuthContext'
+import { orderFromCents } from '../../utils/money'
 import logger from '../../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -357,7 +358,10 @@ function TransactionDetail({ txId, onBack }) {
     // GET /api/orders/:id 🔒 — { success, data: { id, products, ... } }
     const { data, error: fetchErr } = await safeAuthFetch(authFetch, API.orders.byId(txId))
 
-    const raw = (data && typeof data === 'object' && !Array.isArray(data) ? data : null)
+    // Live orders carry money as integer cents — convert before normalizing.
+    // The static fallback is already in decimal units, so leave it untouched.
+    const apiOrder = (data && typeof data === 'object' && !Array.isArray(data)) ? orderFromCents(data) : null
+    const raw = apiOrder
       ?? (FALLBACK_TRANSACTIONS.find((t) => t.id === txId) ?? FALLBACK_TRANSACTIONS[0])
     if (!data) {
       setUsingFallback(true)
@@ -603,7 +607,8 @@ export function PurchaseHistoryPanel() {
           : Array.isArray(data)
             ? data
             : []
-      list = rows.map(normalizeOrder)
+      // Live orders carry money as integer cents — convert before normalizing.
+      list = rows.map(orderFromCents).map(normalizeOrder)
       setTransactions(list)
     } else {
       list = FALLBACK_TRANSACTIONS.map(normalizeOrder)

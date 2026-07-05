@@ -8,20 +8,22 @@ const flatError = (message, status) =>
   new Response(JSON.stringify({ message }), { status, headers: { 'Content-Type': 'application/json' } })
 
 // ── toCartItem (snapshot mapping) ────────────────────────────────────────────
+// Product prices are in decimal currency units; the API snapshot is integer
+// cents ($10 → 1000), so the mapper multiplies out on the way to the backend.
 describe('cartService.toCartItem', () => {
-  it('builds a denormalised snapshot from a product', () => {
+  it('builds a denormalised snapshot from a product (prices in cents)', () => {
     const item = toCartItem({ sku: 'A', title: 'Widget', price: 10, discountPercentage: 20 }, 3)
-    expect(item).toEqual({ sku: 'A', description: 'Widget', unitPrice: 10, discountPrice: 8, qty: 3 })
+    expect(item).toEqual({ sku: 'A', description: 'Widget', unitPrice: 1000, discountPrice: 800, qty: 3 })
   })
 
   it('defaults description to sku and discountPrice to unitPrice when no discount', () => {
     const item = toCartItem({ sku: 'B', price: 5 }, 1)
     expect(item.description).toBe('B')
-    expect(item.discountPrice).toBe(5)
+    expect(item.discountPrice).toBe(500)
   })
 
-  it('clamps discountPrice within [0, unitPrice]', () => {
-    expect(toCartItem({ sku: 'C', title: 'X', price: 10, discountPercentage: 0 }, 1).discountPrice).toBe(10)
+  it('clamps discountPrice within [0, unitPrice] (cents)', () => {
+    expect(toCartItem({ sku: 'C', title: 'X', price: 10, discountPercentage: 0 }, 1).discountPrice).toBe(1000)
     expect(toCartItem({ sku: 'D', title: 'Y', price: 10, discountPercentage: 100 }, 1).discountPrice).toBe(0)
   })
 })

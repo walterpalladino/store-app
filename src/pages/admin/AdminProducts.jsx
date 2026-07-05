@@ -14,6 +14,7 @@ import {
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
+import { productFromCents, unitsToCents } from '../../utils/money'
 import logger from '../../utils/logger'
 
 const PAGE_SIZE = 15
@@ -243,7 +244,7 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
       const body = {
         title:                form.title.trim(),
         description:          form.description.trim(),
-        price:                Number(form.price),
+        price:                unitsToCents(form.price),   // form is in dollars; API wants integer cents
         discountPercentage:   form.discountPercentage !== '' ? Number(form.discountPercentage) : 0,
         stock:                form.stock !== '' ? Number(form.stock) : 0,
         category:             form.category.trim(),
@@ -265,8 +266,10 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
       const url    = isNew ? API.products.add : API.products.byId(product.id)
       const method = isNew ? 'POST' : 'PATCH'
       const res   = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      const saved = await unwrap(res)  // { id, title, price, ... } (throws on success:false)
-      onSaved({ ...body, id: saved.id ?? product?.id ?? Date.now(), rating: product?.rating ?? 0, ...saved })
+      const saved = await unwrap(res)  // { id, title, price, ... } in cents (throws on success:false)
+      // Both `body` and the API response carry price in cents; convert the
+      // merged result back to units so it matches the rest of the table state.
+      onSaved(productFromCents({ ...body, id: saved.id ?? product?.id ?? Date.now(), rating: product?.rating ?? 0, ...saved }))
     } catch (err) { setApiError(err.message || 'Save failed. Please try again.') }
     finally { setSaving(false) }
   }
@@ -430,7 +433,8 @@ export default function AdminProducts() {
       else                      url = `${API.products.list}?limit=${PAGE_SIZE}&skip=${skip}`
       const res  = await fetch(url)
       const data = await unwrap(res)  // { products: [...], total, skip, limit }
-      setProducts(data.products ?? []); setTotal(data.total ?? 0)
+      // Prices arrive as integer cents — convert to units for the table + form.
+      setProducts((data.products ?? []).map(productFromCents)); setTotal(data.total ?? 0)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }, [search, category, page])

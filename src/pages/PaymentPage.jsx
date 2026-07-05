@@ -52,7 +52,9 @@ export default function PaymentPage() {
   // No session in state (direct navigation / refresh) → back to checkout.
   if (!checkout) return <Navigate to="/checkout" replace />
 
-  const amount = checkout.amountTotal != null ? checkout.amountTotal / 100 : (order?.discountedTotal ?? 0)
+  // Both amountTotal and discountedTotal are already in decimal currency units
+  // (converted from cents at the checkoutService boundary).
+  const amount = checkout.amountTotal != null ? checkout.amountTotal : (order?.discountedTotal ?? 0)
 
   // Redirect to the return URL the way Stripe does, carrying the order so the
   // return page can display it.
