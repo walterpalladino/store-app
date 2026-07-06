@@ -55,6 +55,10 @@ const API = {
   // Checkout — registers an order from the caller's cart and starts the (mock)
   // Stripe embedded session. POST, no body. Returns { order, checkout }.
   checkout: `${BASE}/api/checkout`,
+
+  // Refund — admin-only. POST { orderId } to start a refund on a paid order.
+  // Returns { order, refund }; settles asynchronously via a Stripe webhook.
+  refund: `${BASE}/api/refund`,
 }
 
 export default API

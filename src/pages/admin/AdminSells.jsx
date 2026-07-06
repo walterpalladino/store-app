@@ -2,15 +2,18 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Divider, Chip, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Alert, Button, Fade,
-  CircularProgress, Tooltip, IconButton,
+  CircularProgress, Tooltip, IconButton, Snackbar,
 } from '@mui/material'
 import {
   ReceiptLongOutlined, RefreshOutlined, TrendingUpOutlined,
   ShoppingBagOutlined, LocalOfferOutlined, PaidOutlined,
+  CurrencyExchangeOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
 import { orderFromCents } from '../../utils/money'
+import { useMerchantAuth } from '../../context/MerchantAuthContext'
+import { startRefund } from '../../services/refundService'
 
 // Reuse the same safe fetch + fallback from PurchaseHistoryPanel
 const FALLBACK = [{
@@ -31,11 +34,16 @@ const STATUS_STYLES = {
   'delivered':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
   'payment completed': { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
   'completed':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
+  'paid':              { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
+  'fulfilled':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
   'shipped':           { color: '#5a8fa3', bg: 'rgba(90,143,163,0.12)'  },
   'processing':        { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
   'pending':           { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
+  'pending_payment':   { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
+  'refunded':          { color: '#7a6aa8', bg: 'rgba(122,106,168,0.12)' },
   'error':             { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
   'payment could not be processed': { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)' },
+  'payment_failed':    { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
   'cancelled':         { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
 }
 
@@ -70,16 +78,23 @@ function StatCard({ icon, label, value, sub, color = 'secondary.dark' }) {
 }
 
 export default function AdminSells() {
+  const { merchantFetch } = useMerchantAuth()
   const [transactions,  setTransactions]  = useState([])
   const [thumbnails,    setThumbnails]    = useState({})
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState('')
   const [usingFallback, setUsingFallback] = useState(false)
+  const [refundingId,   setRefundingId]   = useState(null)   // order id with a refund in flight
+  const [toast,         setToast]         = useState({ open: false, message: '', severity: 'success' })
+
+  const closeToast = () => setToast((t) => ({ ...t, open: false }))
 
   const load = useCallback(async () => {
     setLoading(true); setError(''); setUsingFallback(false)
     try {
-      const res  = await fetch(API.orders.list)
+      // Orders are 🔒 and scoped by role at the backend — go through the
+      // authenticated admin fetcher so the caller's ADMIN token is sent.
+      const res  = await merchantFetch(API.orders.list)
       const data = await unwrap(res)  // { orders: [...] }
       const rows = Array.isArray(data.orders) ? data.orders
         : Array.isArray(data.transactions) ? data.transactions
@@ -104,9 +119,32 @@ export default function AdminSells() {
       setUsingFallback(true)
       setError(`Live API unavailable — showing demo data. (${err.message})`)
     } finally { setLoading(false) }
-  }, [])
+  }, [merchantFetch])
 
   useEffect(() => { load() }, [load])
+
+  // Start a refund for a paid order (admin-only). The refund settles
+  // asynchronously via a webhook, so the response reports a *pending* state —
+  // we merge the returned refund fields into the row and report the outcome.
+  const handleRefund = useCallback(async (tx) => {
+    setRefundingId(tx.id)
+    try {
+      const { order, refund } = await startRefund(merchantFetch, tx.id)
+      setTransactions((prev) => prev.map((t) => (t.id === tx.id
+        ? { ...t, status: order?.status ?? t.status, refundStatus: order?.refundStatus ?? 'pending' }
+        : t)))
+      const state = refund?.status ?? order?.refundStatus ?? 'pending'
+      setToast({
+        open: true,
+        severity: state === 'failed' ? 'error' : 'success',
+        message: `Refund ${state} for order #${String(tx.id).padStart(5, '0')}.`,
+      })
+    } catch (err) {
+      setToast({ open: true, severity: 'error', message: err.message || 'Refund could not be started.' })
+    } finally {
+      setRefundingId(null)
+    }
+  }, [merchantFetch])
 
   // Computed stats
   const totalRevenue   = transactions.reduce((s, t) => s + t.discountedTotal, 0)
@@ -181,7 +219,7 @@ export default function AdminSells() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  {['Order', 'Date', 'Products', 'Units', 'Payment', 'Total', 'Status'].map((h) => (
+                  {['Order', 'Date', 'Products', 'Units', 'Payment', 'Total', 'Status', 'Actions'].map((h) => (
                     <TableCell key={h} sx={{ py: 1.5, px: 2, fontSize: '0.62rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', fontWeight: 500, bgcolor: 'rgba(26,26,26,0.02)', borderBottom: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' }}>
                       {h}
                     </TableCell>
@@ -192,7 +230,7 @@ export default function AdminSells() {
                 {loading
                   ? Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 7 }).map((_, j) => (
+                        {Array.from({ length: 8 }).map((_, j) => (
                           <TableCell key={j} sx={{ py: 1.5, px: 2 }}>
                             <Box sx={{ height: 14, borderRadius: 1, bgcolor: 'rgba(26,26,26,0.06)', width: j === 0 ? 60 : 80 }} />
                           </TableCell>
@@ -202,6 +240,12 @@ export default function AdminSells() {
                   : transactions.map((tx, idx) => {
                       const st = getStatus(tx.status)
                       const savings = tx.total - tx.discountedTotal
+                      const status       = String(tx.status ?? '').toLowerCase()
+                      const refundStatus = String(tx.refundStatus ?? 'none').toLowerCase()
+                      // A refund can only be started on a paid order that has no
+                      // refund yet (the API returns 409 otherwise).
+                      const canRefund  = status === 'paid' && (refundStatus === 'none' || refundStatus === '')
+                      const isRefunding = refundingId === tx.id
                       return (
                         <TableRow key={tx.id} sx={{ bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)', '&:last-child td': { border: 0 }, '&:hover': { bgcolor: 'rgba(200,169,110,0.03)' }, transition: 'background 0.15s' }}>
                           {/* Order # */}
@@ -255,6 +299,34 @@ export default function AdminSells() {
                           {/* Status */}
                           <TableCell sx={{ py: 1.75, px: 2 }}>
                             <Chip label={tx.status ?? 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                          </TableCell>
+                          {/* Actions — refund (admin only, paid orders) */}
+                          <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
+                            {refundStatus === 'pending' ? (
+                              <Chip label="Refund pending" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(200,169,110,0.12)', color: '#c8a96e', fontWeight: 500, borderRadius: 1 }} />
+                            ) : refundStatus === 'refunded' || status === 'refunded' ? (
+                              <Chip label="Refunded" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(122,106,168,0.12)', color: '#7a6aa8', fontWeight: 500, borderRadius: 1 }} />
+                            ) : refundStatus === 'failed' ? (
+                              <Tooltip title="The last refund attempt failed" arrow>
+                                <Chip label="Refund failed" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(184,92,74,0.1)', color: '#b85c4a', fontWeight: 500, borderRadius: 1 }} />
+                              </Tooltip>
+                            ) : (
+                              <Tooltip title={canRefund ? 'Refund this order' : 'Only paid orders can be refunded'} arrow>
+                                {/* span keeps the tooltip working while the button is disabled */}
+                                <span>
+                                  <Button
+                                    size="small" variant="outlined" disabled={!canRefund || isRefunding}
+                                    onClick={() => handleRefund(tx)}
+                                    startIcon={isRefunding
+                                      ? <CircularProgress size={13} sx={{ color: 'inherit' }} />
+                                      : <CurrencyExchangeOutlined sx={{ fontSize: 14 }} />}
+                                    sx={{ fontSize: '0.66rem', letterSpacing: '0.04em', textTransform: 'none', py: 0.4, px: 1.2, borderColor: 'rgba(184,92,74,0.4)', color: '#b85c4a', '&:hover': { borderColor: '#b85c4a', bgcolor: 'rgba(184,92,74,0.06)' } }}
+                                  >
+                                    {isRefunding ? 'Refunding…' : 'Refund'}
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                            )}
                           </TableCell>
                         </TableRow>
                       )
@@ -325,6 +397,15 @@ export default function AdminSells() {
             </Box>
           </Box>
         )}
+
+        {/* Refund outcome / error feedback */}
+        <Snackbar open={toast.open} autoHideDuration={4000} onClose={closeToast}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+          <Alert severity={toast.severity} onClose={closeToast}
+            sx={{ fontSize: '0.82rem', boxShadow: '0 4px 20px rgba(26,26,26,0.15)' }}>
+            {toast.message}
+          </Alert>
+        </Snackbar>
       </Box>
     </Fade>
   )

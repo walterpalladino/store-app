@@ -131,6 +131,9 @@ invalid token returns **401**.
 | Orders   | GET    | `/api/orders`                          | 🔒   |
 | Orders   | GET    | `/api/orders/:id`                      | 🔒   |
 | Checkout | POST   | `/api/checkout`                        | 🔒   |
+| Checkout | POST   | `/api/checkout/webhook`                | —    |
+| Refunds  | POST   | `/api/refund`                          | 🔒 ADMIN |
+| Refunds  | POST   | `/api/refund/webhook`                  | —    |
 
 ---
 
@@ -1131,13 +1134,17 @@ order transitions as:
 
 | Stripe event | order transitions to | side effect |
 | --- | --- | --- |
-| `checkout.session.completed` / `async_payment_succeeded` | `paid` | records `paidOn` |
+| `checkout.session.completed` / `async_payment_succeeded` | `paid` | records `paidOn`, captures `paymentIntent` |
 | `checkout.session.async_payment_failed` / `expired` | `payment_failed` | — |
 | *(any other event)* | unchanged | acknowledged and ignored |
 
-Only an order currently in `pending_payment` can be settled. Re-delivering the
-same event (order already in the target status) is a no-op and still returns
-**200**, so Stripe's retries don't error.
+The event is matched to the order by **both** its order id *and* its checkout
+session id: the session id in the event must equal the one captured on the order
+at checkout. A mismatched (or missing) session id is rejected with **409** and
+the order is left unchanged — an event for a different or stale session can never
+settle it. Only an order currently in `pending_payment` can be settled.
+Re-delivering the same event (order already in the target status) is a no-op and
+still returns **200**, so Stripe's retries don't error.
 
 ```bash
 # Real Stripe: send a signed event (use the Stripe CLI to forward + sign)
@@ -1156,9 +1163,76 @@ stripe trigger checkout.session.completed
 **422** — signature verification failed / unsupported event
 
 > **Mock mode** (`STRIPE_SECRET_KEY` unset) — the mock processor skips signature
-> verification and accepts a plain JSON body `{ "orderId": 5, "status":
-> "payment_succeeded" | "payment_failed" }`, which is how the test suite drives
-> the webhook. Full details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
+> verification and accepts a plain JSON body `{ "orderId": 5, "sessionId":
+> "cs_test_…", "status": "payment_succeeded" | "payment_failed" }`, which is how
+> the test suite drives the webhook. `sessionId` must match the order's stored
+> session id. Full details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
+
+---
+
+## Refunds 🔒 ADMIN
+
+Refunding a **paid** order is an **admin-only** operation, separate from the
+orders resource. Starting a refund hands off to Stripe and moves the order's
+`refundStatus` to `pending`; the refund settles asynchronously via a webhook,
+which updates `amountRefunded` / `refundedOn`, sets `refundStatus` to `refunded`,
+and moves the order to `refunded`. (Refund fields on the order object are
+described under [Orders](#orders-).)
+
+### POST `/api/refund` 🔒 ADMIN
+
+Start a refund for a paid order. Requires an authenticated ADMIN.
+
+```bash
+curl -X POST http://localhost:3000/api/refund \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "orderId": 5 }'
+```
+
+**Body:** `orderId` (required).
+
+**201**
+
+```json
+{
+  "success": true,
+  "data": {
+    "order": { "id": 5, "status": "paid", "refundStatus": "pending", "…": "…" },
+    "refund": { "provider": "stripe", "refundId": "re_…", "status": "pending", "amount": 2400, "currency": "usd" }
+  }
+}
+```
+
+**401** — missing/invalid token · **403** — not an ADMIN
+**404** — no such order
+**409** — the order is not `paid`, or a refund is already `pending`/`refunded`/`failed`
+
+### POST `/api/refund/webhook`
+
+**Public** (no token) — the payment processor calls this server-to-server to
+report the refund outcome; verified by **signature** like the checkout webhook.
+The event is matched to the order by **both** its order id *and* its refund id
+(which must equal the one captured when the refund started). Refund events map as:
+
+| Stripe event (refund status) | order refund settles to | side effect |
+| --- | --- | --- |
+| refund `succeeded` | `refunded` | records `amountRefunded` / `refundedOn`, order → `refunded` |
+| refund `failed` / `canceled` | `failed` | order stays `paid` |
+| *(still pending / other)* | unchanged | acknowledged and ignored |
+
+Only an order with a `pending` refund can be settled. Re-delivery is idempotent
+(**200**). A mismatched/unknown refund id → **409**; unknown order → **404**.
+
+**200** — receipt acknowledgement only:
+
+```json
+{ "received": true }
+```
+
+> **Mock mode** (`STRIPE_SECRET_KEY` unset) accepts a plain JSON body
+> `{ "orderId": 5, "refundId": "re_…", "amountRefunded": 2400, "status":
+> "refund_succeeded" | "refund_failed" }`, which is how the test suite drives it.
 
 ---
 
@@ -1167,8 +1241,9 @@ stripe trigger checkout.session.completed
 - Read errors as `response.data.message` (flat), success payloads as `response.data.data`.
 - Store `accessToken` and `refreshToken` from login; send `Authorization: Bearer <accessToken>`
   on 🔒 endpoints; call `POST /api/auth/refresh` when the access token expires.
-- **🔒 ADMIN** endpoints (product and category create/update/delete) require the token's user
-  to have the `ADMIN` role — non-admins get **403**, missing/invalid tokens get **401**.
+- **🔒 ADMIN** endpoints (product and category create/update/delete, and starting a refund
+  via `POST /api/refund`) require the token's user to have the `ADMIN` role — non-admins get
+  **403**, missing/invalid tokens get **401**.
 - The cart and wishlist are per-user singletons under `/api/users/:id/…`; `:id` must be the
   logged-in user's own id. Place an order with `POST /api/checkout` (no body) — never post order
   data directly; `/api/orders` is read-only.
