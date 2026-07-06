@@ -48,8 +48,11 @@ const API = {
 
   // Orders are read-only — created only by the checkout flow, never posted directly.
   orders: {
-    list: `${BASE}/api/orders`,
-    byId: (id) => `${BASE}/api/orders/${id}`,
+    list:   `${BASE}/api/orders`,
+    // Search the caller's own orders by public order id (UUID) substring.
+    // Empty/missing `q` returns all of the caller's orders (same as list).
+    search: (q) => `${BASE}/api/orders/search?q=${encodeURIComponent(q ?? '')}`,
+    byId:   (id) => `${BASE}/api/orders/${id}`,
   },
 
   // Checkout — registers an order from the caller's cart and starts the (mock)

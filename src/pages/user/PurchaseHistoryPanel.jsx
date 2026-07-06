@@ -1,6 +1,7 @@
 import API from '../../config/api'
 import { useAuth } from '../../context/AuthContext'
 import { orderFromCents } from '../../utils/money'
+import { normalizeOrder } from '../../utils/orders'
 import logger from '../../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -73,6 +74,11 @@ const STATUS_STYLES = {
 // "pending_payment" → "Pending Payment"
 const prettyStatus = (s) => String(s).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
+// Public order id shown to users: the first segment of the UUID (#018f9a2c),
+// falling back to the padded numeric id for demo/legacy orders without one.
+const shortOrderId = (tx) =>
+  tx?.orderId ? `#${String(tx.orderId).split('-')[0]}` : `#${String(tx?.id).padStart(5, '0')}`
+
 function statusMeta(tx) {
   if (tx.status) {
     const key = String(tx.status).toLowerCase()
@@ -112,35 +118,6 @@ async function safeAuthFetch(authFetch, url) {
     return await readResult(await authFetch(url))
   } catch (err) {
     return { data: null, error: err.message || 'Network error' }
-  }
-}
-
-// Map an order to the flat line-item shape the UI renders, tolerating both the
-// current backend (`description`/`unitPrice`/`discountPrice`/`qty`, sku-only) and
-// the legacy/demo shape (`title`/`price`/`quantity`/`total`/…).
-function normalizeOrder(o) {
-  const products = (Array.isArray(o?.products) ? o.products : []).map((p, i) => {
-    const price     = p.price ?? p.unitPrice ?? 0
-    const quantity  = p.quantity ?? p.qty ?? 0
-    const discUnit  = p.discountPrice ?? price               // discounted UNIT price
-    const total           = p.total ?? +(price * quantity).toFixed(2)
-    const discountedTotal = p.discountedTotal ?? +(discUnit * quantity).toFixed(2)
-    const discountPercentage = p.discountPercentage
-      ?? (price > 0 ? +(((price - discUnit) / price) * 100).toFixed(2) : 0)
-    return {
-      id: p.id ?? p.productId ?? p.sku ?? i,   // React key + thumbnail lookup
-      sku: p.sku ?? null,
-      title: p.title ?? p.description ?? p.sku ?? 'Item',
-      price, quantity, total, discountedTotal, discountPercentage,
-    }
-  })
-  return {
-    ...o,
-    products,
-    total:           o?.total ?? products.reduce((s, p) => s + p.total, 0),
-    discountedTotal: o?.discountedTotal ?? products.reduce((s, p) => s + p.discountedTotal, 0),
-    totalProducts:   o?.totalProducts ?? products.length,
-    totalQuantity:   o?.totalQuantity ?? products.reduce((s, p) => s + p.quantity, 0),
   }
 }
 
@@ -250,7 +227,7 @@ function TransactionCard({ tx, thumbnails = {}, onView }) {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
             <ReceiptLongOutlined sx={{ fontSize: 14, color: 'secondary.dark' }} />
             <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.06em', fontFamily: 'monospace' }}>
-              #{String(tx.id).padStart(5, '0')}
+              {shortOrderId(tx)}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -414,8 +391,13 @@ function TransactionDetail({ txId, onBack }) {
                   <Box>
                     <Typography sx={{ fontSize: '0.6rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(200,169,110,0.7)', mb: 0.5 }}>Order</Typography>
                     <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1.5rem', fontWeight: 300, color: '#f5f0e8', lineHeight: 1 }}>
-                      #{String(tx.id).padStart(5, '0')}
+                      {shortOrderId(tx)}
                     </Typography>
+                    {tx.orderId && (
+                      <Typography sx={{ fontFamily: 'monospace', fontSize: '0.62rem', color: 'rgba(245,240,232,0.5)', mt: 0.6, wordBreak: 'break-all' }}>
+                        {tx.orderId}
+                      </Typography>
+                    )}
                     <Typography sx={{ fontSize: '0.7rem', color: 'rgba(245,240,232,0.45)', mt: 0.4 }}>Placed {mockDate(tx.id)}</Typography>
                   </Box>
                   <Box sx={{ textAlign: 'right' }}>

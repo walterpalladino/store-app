@@ -77,6 +77,35 @@ describe('AdminSells — error handling', () => {
     // The Product Breakdown renders the lean line-item without crashing.
     expect(screen.getByText('Product Breakdown')).toBeInTheDocument()
   })
+
+  it('renders item names from the denormalised sku/description order shape', async () => {
+    // Real backend order shape: line-items are a denormalised snapshot carrying
+    // sku + description + qty (money in cents) — no title/quantity/discountedTotal.
+    // The public `orderId` (UUID) is what the admin sees instead of the db id.
+    const orders = [{
+      id: 9,
+      orderId: 'b562e3ae-792f-11f1-9844-97b9d913d5f0',
+      products: [
+        { sku: 'BEA-NAI-NAI-005', description: 'Red Nail Polish',        unitPrice: 899,   discountPrice: 796,   qty: 1 },
+        { sku: 'FRA-CHA-CHA-007', description: 'Chanel Coco Noir Eau De', unitPrice: 12999, discountPrice: 10853, qty: 1 },
+      ],
+      total: 13898, discountedTotal: 11649, totalProducts: 2, totalQuantity: 2,
+      status: 'pending_payment',
+      payment: { provider: 'stripe', status: 'open', currency: 'usd' },
+    }]
+    setup({ orders: () => mockJsonResponse(okEnvelope({ orders })) })
+
+    render(<AdminSells />)
+
+    // Item names resolve from `description` (regression: previously undefined) …
+    expect(await screen.findByText('Red Nail Polish')).toBeInTheDocument()
+    // Chanel is the top-revenue line, so it shows in both the breakdown and the
+    // "Top Product by Revenue" card (previously the literal string "undefined").
+    expect(screen.getAllByText('Chanel Coco Noir Eau De').length).toBeGreaterThan(0)
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument()
+    // … and the short public order id is shown instead of the numeric db id.
+    expect(screen.getByText('#b562e3ae')).toBeInTheDocument()
+  })
 })
 
 describe('AdminSells — refunds', () => {

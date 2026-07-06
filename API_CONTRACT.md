@@ -129,6 +129,7 @@ invalid token returns **401**.
 | Carts    | PATCH  | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | DELETE | `/api/users/:id/cart`                  | 🔒   |
 | Orders   | GET    | `/api/orders`                          | 🔒   |
+| Orders   | GET    | `/api/orders/search`                   | 🔒   |
 | Orders   | GET    | `/api/orders/:id`                      | 🔒   |
 | Checkout | POST   | `/api/checkout`                        | 🔒   |
 | Checkout | POST   | `/api/checkout/webhook`                | —    |
@@ -1016,6 +1017,7 @@ The **order object**:
 ```json
 {
   "id": 5,
+  "orderId": "018f9a2c-7b3e-7c21-9e2a-3f1b6d4e5a90",
   "userId": 10,
   "products": [
     { "sku": "BMW-PNC-001", "description": "BMW Pencil", "unitPrice": 1000, "discountPrice": 800, "qty": 3 }
@@ -1039,15 +1041,19 @@ The **order object**:
 net payable (gross − discounts). All amounts are integer cents; `amountTotal` in
 the payment summary equals `discountedTotal` (Stripe's smallest-unit amount).
 
+- `id` — the internal numeric primary key (used in `/api/orders/:id` paths).
+- `orderId` — the **public, time-sortable UUID v7** identifier. This is the id
+  shown in emails and sent to Stripe (in `metadata.orderId`); the payment and
+  refund webhooks look the order up by it.
 - `currency` — ISO 4217 currency the order is priced/charged in (the system
   currency, from the `CURRENCY` env var; defaults to `usd`).
 - `paidOn` — timestamp set when Stripe confirms the payment; `null` until then.
-- `amountRefunded` (cents), `refundStatus` (`none` until a refund is issued) and
-  `refundedOn` are **reserved for a later refund implementation** — new orders
+- `amountRefunded` (cents), `refundStatus` (`none` → `pending` → `refunded`/`failed`)
+  and `refundedOn` track a refund (see [Refunds](#refunds--admin)); new orders
   return `0` / `"none"` / `null`.
 
-The Stripe identifiers `paymentId` and `paymentIntent` are stored server-side only
-and are **never** returned by the API.
+The Stripe identifiers `paymentId`, `paymentIntent`, `sessionId` and `refundId`
+are stored server-side only and are **never** returned by the API.
 
 ### GET `/api/orders` 🔒
 
@@ -1055,6 +1061,23 @@ List the caller's own orders, newest first.
 
 ```bash
 curl http://localhost:3000/api/orders -H "Authorization: Bearer <token>"
+```
+
+**200** → `{ success, data: { orders: [ … ] } }`
+
+---
+
+### GET `/api/orders/search` 🔒
+
+Search the caller's own orders by **public order id** (`orderId`, the UUID),
+matched as a case-insensitive substring. Scoped to the caller — another user's
+order never appears. An empty/missing `q` returns all of the caller's orders
+(same as `GET /api/orders`).
+
+**Query params:** `q` (the `orderId` or a fragment of it).
+
+```bash
+curl "http://localhost:3000/api/orders/search?q=018f9a2c" -H "Authorization: Bearer <token>"
 ```
 
 **200** → `{ success, data: { orders: [ … ] } }`
@@ -1129,8 +1152,9 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 **Public** (no token) — Stripe calls this server-to-server to report the outcome
 of a checkout session. The request is verified by **signature** (the raw body is
 checked against the `stripe-signature` header using `STRIPE_WEBHOOK_SECRET`), and
-the order id is read from the session's `metadata.orderId`. Stripe events map to
-order transitions as:
+the order's **public UUID** (`orderId`) is read from the session's
+`metadata.orderId` — the order is looked up by it. Stripe events map to order
+transitions as:
 
 | Stripe event | order transitions to | side effect |
 | --- | --- | --- |
@@ -1163,10 +1187,11 @@ stripe trigger checkout.session.completed
 **422** — signature verification failed / unsupported event
 
 > **Mock mode** (`STRIPE_SECRET_KEY` unset) — the mock processor skips signature
-> verification and accepts a plain JSON body `{ "orderId": 5, "sessionId":
-> "cs_test_…", "status": "payment_succeeded" | "payment_failed" }`, which is how
-> the test suite drives the webhook. `sessionId` must match the order's stored
-> session id. Full details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
+> verification and accepts a plain JSON body `{ "orderId": "018f9a2c-…"
+> (the order UUID), "sessionId": "cs_test_…", "status": "payment_succeeded" |
+> "payment_failed" }`, which is how the test suite drives the webhook. `sessionId`
+> must match the order's stored session id. Full details:
+> [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
 ---
 
@@ -1190,7 +1215,9 @@ curl -X POST http://localhost:3000/api/refund \
   -d '{ "orderId": 5 }'
 ```
 
-**Body:** `orderId` (required).
+**Body:** `orderId` (required) — the order's internal numeric `id` (this
+admin-facing lookup uses the numeric key; the UUID is what crosses the Stripe
+boundary and settles the refund via the webhook).
 
 **201**
 
@@ -1231,7 +1258,7 @@ Only an order with a `pending` refund can be settled. Re-delivery is idempotent
 ```
 
 > **Mock mode** (`STRIPE_SECRET_KEY` unset) accepts a plain JSON body
-> `{ "orderId": 5, "refundId": "re_…", "amountRefunded": 2400, "status":
+> `{ "orderId": "018f9a2c-…" (the order UUID), "refundId": "re_…", "amountRefunded": 2400, "status":
 > "refund_succeeded" | "refund_failed" }`, which is how the test suite drives it.
 
 ---

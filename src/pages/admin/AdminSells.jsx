@@ -2,16 +2,18 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Divider, Chip, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Alert, Button, Fade,
-  CircularProgress, Tooltip, IconButton, Snackbar,
+  CircularProgress, Tooltip, IconButton, Snackbar, TextField,
+  InputAdornment,
 } from '@mui/material'
 import {
   ReceiptLongOutlined, RefreshOutlined, TrendingUpOutlined,
   ShoppingBagOutlined, LocalOfferOutlined, PaidOutlined,
-  CurrencyExchangeOutlined,
+  CurrencyExchangeOutlined, SearchOutlined, ClearOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
 import { orderFromCents } from '../../utils/money'
+import { normalizeOrder } from '../../utils/orders'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import { startRefund } from '../../services/refundService'
 
@@ -53,6 +55,11 @@ function getStatus(s) {
 
 const fmt = (n) => Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
 
+// Public order id shown to users: the first segment of the UUID (#018f9a2c),
+// falling back to the padded numeric id for demo/legacy orders without one.
+const shortOrderId = (tx) =>
+  tx?.orderId ? `#${String(tx.orderId).split('-')[0]}` : `#${String(tx?.id).padStart(5, '0')}`
+
 // Order line-items may arrive in the lean API shape ({ productId, quantity, price })
 // or the richer legacy/demo shape ({ id, title, discountedTotal, discountPercentage }).
 const pid     = (p) => p.productId ?? p.id
@@ -86,28 +93,34 @@ export default function AdminSells() {
   const [usingFallback, setUsingFallback] = useState(false)
   const [refundingId,   setRefundingId]   = useState(null)   // order id with a refund in flight
   const [toast,         setToast]         = useState({ open: false, message: '', severity: 'success' })
+  const [query,         setQuery]         = useState('')     // public order-id search
 
   const closeToast = () => setToast((t) => ({ ...t, open: false }))
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (q = '') => {
     setLoading(true); setError(''); setUsingFallback(false)
     try {
       // Orders are 🔒 and scoped by role at the backend — go through the
       // authenticated admin fetcher so the caller's ADMIN token is sent.
-      const res  = await merchantFetch(API.orders.list)
+      // With a query, hit the search endpoint (substring match on the public
+      // order id); empty query lists every order.
+      const url  = q.trim() ? API.orders.search(q.trim()) : API.orders.list
+      const res  = await merchantFetch(url)
       const data = await unwrap(res)  // { orders: [...] }
       const rows = Array.isArray(data.orders) ? data.orders
         : Array.isArray(data.transactions) ? data.transactions
         : Array.isArray(data) ? data : [data]
-      // Live orders carry money as integer cents — convert to units for display.
-      const list = rows.map(orderFromCents)
+      // Live orders carry money as integer cents — convert to units, then flatten
+      // the denormalised line items (`sku`/`description`/`qty`) to the shape the
+      // table renders (`title`/`quantity`/`discountedTotal`/…).
+      const list = rows.map(orderFromCents).map(normalizeOrder)
       setTransactions(list)
-      // Load thumbnails in background — each product endpoint now { success, data: {...} }
-      const ids = [...new Set(list.flatMap((tx) => tx.products.map((p) => p.productId ?? p.id)))]
-      Promise.all(ids.map((id) =>
-        fetch(API.products.byId(id))
+      // Load thumbnails in background, keyed by sku (order lines carry only a sku).
+      const skus = [...new Set(list.flatMap((tx) => tx.products.map((p) => p.sku).filter(Boolean)))]
+      Promise.all(skus.map((sku) =>
+        fetch(API.products.bySku(sku))
           .then((r) => r.json())
-          .then((body) => { const d = body.success ? body.data : body; return [id, d.thumbnail] })
+          .then((body) => { const d = body.success ? body.data : body; return [sku, d.thumbnail] })
           .catch(() => null)
       )).then((results) => {
         const map = {}
@@ -121,7 +134,11 @@ export default function AdminSells() {
     } finally { setLoading(false) }
   }, [merchantFetch])
 
-  useEffect(() => { load() }, [load])
+  // Debounce searches so we don't fire a request on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => load(query), 350)
+    return () => clearTimeout(t)
+  }, [query, load])
 
   // Start a refund for a paid order (admin-only). The refund settles
   // asynchronously via a webhook, so the response reports a *pending* state —
@@ -137,7 +154,7 @@ export default function AdminSells() {
       setToast({
         open: true,
         severity: state === 'failed' ? 'error' : 'success',
-        message: `Refund ${state} for order #${String(tx.id).padStart(5, '0')}.`,
+        message: `Refund ${state} for order ${shortOrderId(tx)}.`,
       })
     } catch (err) {
       setToast({ open: true, severity: 'error', message: err.message || 'Refund could not be started.' })
@@ -194,23 +211,46 @@ export default function AdminSells() {
         {/* Alerts */}
         {error && (
           <Alert severity={usingFallback ? 'warning' : 'error'} sx={{ mb: 3, fontSize: '0.78rem' }}
-            action={<Button size="small" color="inherit" onClick={load} startIcon={<RefreshOutlined sx={{ fontSize: 13 }} />} sx={{ fontSize: '0.68rem' }}>Retry</Button>}
+            action={<Button size="small" color="inherit" onClick={() => load(query)} startIcon={<RefreshOutlined sx={{ fontSize: 13 }} />} sx={{ fontSize: '0.68rem' }}>Retry</Button>}
             onClose={() => setError('')}>
             {error}
           </Alert>
         )}
 
         {/* Toolbar */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
-          <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
-            {totalOrders} {totalOrders === 1 ? 'order' : 'orders'} found
-          </Typography>
-          <Tooltip title="Refresh" arrow>
-            <IconButton size="small" onClick={load} disabled={loading}
-              sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-              <RefreshOutlined sx={{ fontSize: 17 }} />
-            </IconButton>
-          </Tooltip>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
+          <TextField
+            size="small"
+            placeholder="Search by order id…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            sx={{ minWidth: 240, flex: '1 1 240px', maxWidth: 360, '& .MuiOutlinedInput-root': { borderRadius: 1, fontSize: '0.8rem' } }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchOutlined sx={{ fontSize: 17, color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+              endAdornment: query ? (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setQuery('')} aria-label="Clear search">
+                    <ClearOutlined sx={{ fontSize: 15 }} />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            }}
+          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, ml: 'auto' }}>
+            <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', whiteSpace: 'nowrap' }}>
+              {totalOrders} {totalOrders === 1 ? 'order' : 'orders'} {query ? 'matched' : 'found'}
+            </Typography>
+            <Tooltip title="Refresh" arrow>
+              <IconButton size="small" onClick={() => load(query)} disabled={loading}
+                sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                <RefreshOutlined sx={{ fontSize: 17 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
         </Box>
 
         {/* Orders table */}
@@ -252,9 +292,11 @@ export default function AdminSells() {
                           <TableCell sx={{ py: 1.75, px: 2 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                               <ReceiptLongOutlined sx={{ fontSize: 14, color: 'secondary.dark' }} />
-                              <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em' }}>
-                                #{String(tx.id).padStart(5, '0')}
-                              </Typography>
+                              <Tooltip title={tx.orderId || ''} arrow disableHoverListener={!tx.orderId}>
+                                <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em' }}>
+                                  {shortOrderId(tx)}
+                                </Typography>
+                              </Tooltip>
                             </Box>
                           </TableCell>
                           {/* Date */}
