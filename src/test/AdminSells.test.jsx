@@ -10,15 +10,24 @@ import API from '../config/api'
 
 afterEach(() => { vi.restoreAllMocks() })
 
-// The 🔒 orders list and the refund POST are role-checked at the backend, so
-// they go through the authenticated merchantFetch. Public product-thumbnail
-// lookups go through global.fetch.
-//   `orders` / `refund` are optional factories returning a Response (or a
-//   rejected promise) for each respective call.
-function setup({ orders, refund } = {}) {
-  const merchantFetch = vi.fn((url) => {
-    if (String(url).includes('/api/refund')) {
+// The 🔒 orders list, the refund POST and the admin status endpoints are
+// role-checked at the backend, so they go through the authenticated
+// merchantFetch. Public product-thumbnail lookups go through global.fetch.
+//   `orders` / `refund` / `statuses` / `setStatus` are optional factories
+//   returning a Response (or a rejected promise) for each respective call.
+const DEFAULT_STATUSES = ['draft', 'pending_payment', 'paid', 'payment_failed', 'cancelled', 'fulfilled', 'refunded']
+
+function setup({ orders, refund, statuses, setStatus } = {}) {
+  const merchantFetch = vi.fn((url, opts) => {
+    const u = String(url)
+    if (u.includes('/api/refund')) {
       return Promise.resolve(refund ? refund() : mockJsonResponse(okEnvelope({}), 201))
+    }
+    if (/\/orders\/status(\?|$)/.test(u)) {
+      return Promise.resolve(statuses ? statuses() : mockJsonResponse(okEnvelope({ statuses: DEFAULT_STATUSES })))
+    }
+    if (/\/orders\/[^/]+\/status$/.test(u)) {
+      return Promise.resolve(setStatus ? setStatus(url, opts) : mockJsonResponse(okEnvelope({ id: 7, status: 'fulfilled' })))
     }
     return Promise.resolve(orders ? orders() : mockJsonResponse(okEnvelope({ orders: [] })))
   })
@@ -160,5 +169,57 @@ describe('AdminSells — refunds', () => {
     expect(await screen.findByText(/Order is not paid/i)).toBeInTheDocument()
     // Still refundable (row unchanged) — the button is back.
     expect(screen.getByRole('button', { name: /refund/i })).toBeEnabled()
+  })
+})
+
+describe('AdminSells — manual status override', () => {
+  const order = {
+    id: 7,
+    products: [{ productId: 1, quantity: 1, price: 1000 }],
+    total: 1000, discountedTotal: 1000, totalProducts: 1, totalQuantity: 1,
+    status: 'paid', refundStatus: 'none',
+    payment: { method: 'card', status: 'paid' },
+  }
+
+  it('confirms before calling the endpoint, then POSTs the chosen status', async () => {
+    const { merchantFetch } = setup({
+      orders:    () => mockJsonResponse(okEnvelope({ orders: [order] })),
+      setStatus: () => mockJsonResponse(okEnvelope({ id: 7, status: 'fulfilled' })),
+    })
+
+    render(<AdminSells />)
+
+    // Open the per-row status picker and choose a new status.
+    fireEvent.click(await screen.findByRole('button', { name: /change status of order #00007/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Fulfilled' }))
+
+    // A confirmation dialog appears — and nothing has been sent yet.
+    expect(await screen.findByText(/Change order status\?/i)).toBeInTheDocument()
+    expect(merchantFetch.mock.calls.some(([u]) => /\/orders\/7\/status$/.test(String(u)))).toBe(false)
+
+    // Confirm → POSTs the new status through the authenticated fetcher.
+    fireEvent.click(screen.getByRole('button', { name: /confirm change/i }))
+    await waitFor(() =>
+      expect(merchantFetch.mock.calls.some(([u]) => /\/orders\/7\/status$/.test(String(u)))).toBe(true)
+    )
+    const call = merchantFetch.mock.calls.find(([u]) => /\/orders\/7\/status$/.test(String(u)))
+    expect(call[1].method).toBe('POST')
+    expect(JSON.parse(call[1].body)).toEqual({ status: 'fulfilled' })
+
+    // Outcome is reported and the row reflects the new status.
+    expect(await screen.findByText(/Order #00007 set to/i)).toBeInTheDocument()
+  })
+
+  it('does not call the endpoint when the confirmation is cancelled', async () => {
+    const { merchantFetch } = setup({ orders: () => mockJsonResponse(okEnvelope({ orders: [order] })) })
+
+    render(<AdminSells />)
+    fireEvent.click(await screen.findByRole('button', { name: /change status of order #00007/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelled' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^cancel$/i }))
+
+    // The override endpoint was never hit.
+    await waitFor(() => expect(screen.queryByText(/Change order status\?/i)).not.toBeInTheDocument())
+    expect(merchantFetch.mock.calls.some(([u]) => /\/orders\/7\/status$/.test(String(u)))).toBe(false)
   })
 })

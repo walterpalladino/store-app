@@ -130,7 +130,9 @@ invalid token returns **401**.
 | Carts    | DELETE | `/api/users/:id/cart`                  | 🔒   |
 | Orders   | GET    | `/api/orders`                          | 🔒   |
 | Orders   | GET    | `/api/orders/search`                   | 🔒   |
+| Orders   | GET    | `/api/orders/status`                   | 🔒 ADMIN |
 | Orders   | GET    | `/api/orders/:id`                      | 🔒   |
+| Orders   | POST   | `/api/orders/:id/status`               | 🔒 ADMIN |
 | Checkout | POST   | `/api/checkout`                        | 🔒   |
 | Checkout | POST   | `/api/checkout/webhook`                | —    |
 | Refunds  | POST   | `/api/refund`                          | 🔒 ADMIN |
@@ -1097,6 +1099,49 @@ curl http://localhost:3000/api/orders/5 -H "Authorization: Bearer <token>"
 
 ---
 
+### GET `/api/orders/status` 🔒 ADMIN
+
+List every possible order status. Admin only.
+
+```bash
+curl http://localhost:3000/api/orders/status -H "Authorization: Bearer <adminToken>"
+```
+
+**200**
+
+```json
+{
+  "success": true,
+  "data": {
+    "statuses": ["draft", "pending_payment", "paid", "payment_failed", "cancelled", "fulfilled", "refunded"]
+  }
+}
+```
+
+**401** — missing/invalid token · **403** — not an ADMIN
+
+---
+
+### POST `/api/orders/:id/status` 🔒 ADMIN
+
+**Emergency override** — force an order to a given status, bypassing the normal
+lifecycle. Admin only; works on **any** order (not scoped to an owner).
+
+**Body (required):** `status` — one of the values from `GET /api/orders/status`.
+
+```bash
+curl -X POST http://localhost:3000/api/orders/5/status \
+  -H "Authorization: Bearer <adminToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "cancelled" }'
+```
+
+**200** → success envelope wrapping the updated order object.
+**401** — missing/invalid token · **403** — not an ADMIN
+**404** — no such order · **422** — missing or unknown `status`
+
+---
+
 ## Checkout 🔒
 
 Placing an order is a **separate operation** from the orders resource. Checkout
@@ -1276,9 +1321,10 @@ Only an order with a `pending` refund can be settled. Re-delivery is idempotent
 - Read errors as `response.data.message` (flat), success payloads as `response.data.data`.
 - Store `accessToken` and `refreshToken` from login; send `Authorization: Bearer <accessToken>`
   on 🔒 endpoints; call `POST /api/auth/refresh` when the access token expires.
-- **🔒 ADMIN** endpoints (product and category create/update/delete, and starting a refund
-  via `POST /api/refund`) require the token's user to have the `ADMIN` role — non-admins get
-  **403**, missing/invalid tokens get **401**.
+- **🔒 ADMIN** endpoints (product and category create/update/delete, starting a refund
+  via `POST /api/refund`, and the order-status override `GET /api/orders/status` /
+  `POST /api/orders/:id/status`) require the token's user to have the `ADMIN` role —
+  non-admins get **403**, missing/invalid tokens get **401**.
 - The cart and wishlist are per-user singletons under `/api/users/:id/…`; `:id` must be the
   logged-in user's own id. Place an order with `POST /api/checkout` (no body) — never post order
   data directly; `/api/orders` is read-only.

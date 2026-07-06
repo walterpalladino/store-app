@@ -3,12 +3,14 @@ import {
   Box, Typography, Divider, Chip, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Alert, Button, Fade,
   CircularProgress, Tooltip, IconButton, Snackbar, TextField,
-  InputAdornment,
+  InputAdornment, Menu, MenuItem, Dialog, DialogTitle, DialogContent,
+  DialogContentText, DialogActions,
 } from '@mui/material'
 import {
   ReceiptLongOutlined, RefreshOutlined, TrendingUpOutlined,
   ShoppingBagOutlined, LocalOfferOutlined, PaidOutlined,
   CurrencyExchangeOutlined, SearchOutlined, ClearOutlined,
+  EditOutlined, WarningAmberOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
@@ -16,6 +18,14 @@ import { orderFromCents } from '../../utils/money'
 import { normalizeOrder } from '../../utils/orders'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import { startRefund } from '../../services/refundService'
+import { fetchStatusOptions, changeOrderStatus } from '../../services/orderStatusService'
+
+// The order lifecycle, used as a fallback list when GET /api/orders/status is
+// unavailable (see API_CONTRACT.md → Orders).
+const FALLBACK_STATUSES = ['draft', 'pending_payment', 'paid', 'payment_failed', 'cancelled', 'fulfilled', 'refunded']
+
+// "pending_payment" → "Pending Payment"
+const prettyStatus = (s) => String(s ?? '').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 // Reuse the same safe fetch + fallback from PurchaseHistoryPanel
 const FALLBACK = [{
@@ -94,6 +104,10 @@ export default function AdminSells() {
   const [refundingId,   setRefundingId]   = useState(null)   // order id with a refund in flight
   const [toast,         setToast]         = useState({ open: false, message: '', severity: 'success' })
   const [query,         setQuery]         = useState('')     // public order-id search
+  const [statusOptions, setStatusOptions] = useState(FALLBACK_STATUSES)
+  const [statusMenu,    setStatusMenu]    = useState({ anchorEl: null, tx: null })  // per-row status picker
+  const [pendingStatus, setPendingStatus] = useState(null)   // { tx, next } awaiting confirmation
+  const [changingId,    setChangingId]    = useState(null)   // order id with a status change in flight
 
   const closeToast = () => setToast((t) => ({ ...t, open: false }))
 
@@ -162,6 +176,48 @@ export default function AdminSells() {
       setRefundingId(null)
     }
   }, [merchantFetch])
+
+  // Load the valid order statuses once (admin-only endpoint). Falls back to the
+  // known lifecycle if it's unavailable, so the picker still works.
+  useEffect(() => {
+    let alive = true
+    fetchStatusOptions(merchantFetch)
+      .then((opts) => { if (alive && opts.length) setStatusOptions(opts) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [merchantFetch])
+
+  // ── Manual status override (admin) ──────────────────────────────────────────
+  // The change is confirmed in a dialog before the endpoint is called: forcing a
+  // status bypasses the normal lifecycle, so it must be a deliberate action.
+  const openStatusMenu = (e, tx) => setStatusMenu({ anchorEl: e.currentTarget, tx })
+  const closeStatusMenu = () => setStatusMenu({ anchorEl: null, tx: null })
+
+  // Pick a target status → stage it for confirmation (don't call the API yet).
+  const pickStatus = (next) => {
+    const tx = statusMenu.tx
+    closeStatusMenu()
+    if (tx && next !== tx.status) setPendingStatus({ tx, next })
+  }
+
+  const confirmStatusChange = useCallback(async () => {
+    if (!pendingStatus) return
+    const { tx, next } = pendingStatus
+    setChangingId(tx.id)
+    try {
+      const updated = await changeOrderStatus(merchantFetch, tx.id, next)
+      const applied = updated?.status ?? next
+      setTransactions((prev) => prev.map((t) => (t.id === tx.id
+        ? { ...t, status: applied, refundStatus: updated?.refundStatus ?? t.refundStatus }
+        : t)))
+      setToast({ open: true, severity: 'success', message: `Order ${shortOrderId(tx)} set to “${prettyStatus(applied)}”.` })
+      setPendingStatus(null)
+    } catch (err) {
+      setToast({ open: true, severity: 'error', message: err.message || 'Could not change the order status.' })
+    } finally {
+      setChangingId(null)
+    }
+  }, [pendingStatus, merchantFetch])
 
   // Computed stats
   const totalRevenue   = transactions.reduce((s, t) => s + t.discountedTotal, 0)
@@ -338,9 +394,27 @@ export default function AdminSells() {
                               <Typography sx={{ fontSize: '0.65rem', color: 'success.main' }}>-{fmt(savings)}</Typography>
                             )}
                           </TableCell>
-                          {/* Status */}
+                          {/* Status — with an admin override control */}
                           <TableCell sx={{ py: 1.75, px: 2 }}>
-                            <Chip label={tx.status ?? 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Chip label={prettyStatus(tx.status) || 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                              <Tooltip title={usingFallback ? 'Unavailable in demo mode' : 'Change status'} arrow>
+                                {/* span keeps the tooltip working while the button is disabled */}
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    disabled={usingFallback || changingId === tx.id}
+                                    onClick={(e) => openStatusMenu(e, tx)}
+                                    aria-label={`Change status of order ${shortOrderId(tx)}`}
+                                    sx={{ color: 'text.secondary', '&:hover': { color: 'secondary.dark' } }}
+                                  >
+                                    {changingId === tx.id
+                                      ? <CircularProgress size={13} sx={{ color: 'inherit' }} />
+                                      : <EditOutlined sx={{ fontSize: 14 }} />}
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Box>
                           </TableCell>
                           {/* Actions — refund (admin only, paid orders) */}
                           <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
@@ -440,7 +514,60 @@ export default function AdminSells() {
           </Box>
         )}
 
-        {/* Refund outcome / error feedback */}
+        {/* Status picker — lists the valid statuses; current one is disabled */}
+        <Menu
+          anchorEl={statusMenu.anchorEl}
+          open={Boolean(statusMenu.anchorEl)}
+          onClose={closeStatusMenu}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        >
+          {statusOptions.map((s) => (
+            <MenuItem
+              key={s}
+              selected={s === statusMenu.tx?.status}
+              disabled={s === statusMenu.tx?.status}
+              onClick={() => pickStatus(s)}
+              sx={{ fontSize: '0.8rem' }}
+            >
+              {prettyStatus(s)}
+            </MenuItem>
+          ))}
+        </Menu>
+
+        {/* Confirmation — required before the override endpoint is called */}
+        <Dialog open={Boolean(pendingStatus)} onClose={() => changingId ? null : setPendingStatus(null)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontFamily: '"Cormorant Garamond", serif', fontSize: '1.3rem' }}>
+            <WarningAmberOutlined sx={{ color: '#c8a96e', fontSize: 22 }} />
+            Change order status?
+          </DialogTitle>
+          <DialogContent>
+            <DialogContentText sx={{ fontSize: '0.85rem' }}>
+              {pendingStatus && (
+                <>
+                  This forces order <strong>{shortOrderId(pendingStatus.tx)}</strong> from{' '}
+                  <strong>{prettyStatus(pendingStatus.tx.status)}</strong> to{' '}
+                  <strong>{prettyStatus(pendingStatus.next)}</strong>, bypassing the normal
+                  order lifecycle. This is an emergency override and cannot be undone automatically.
+                </>
+              )}
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setPendingStatus(null)} disabled={Boolean(changingId)}
+              sx={{ textTransform: 'none', color: 'text.secondary' }}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained" onClick={confirmStatusChange} disabled={Boolean(changingId)}
+              startIcon={changingId ? <CircularProgress size={14} sx={{ color: 'inherit' }} /> : null}
+              sx={{ textTransform: 'none' }}
+            >
+              {changingId ? 'Applying…' : 'Confirm change'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Refund / status outcome + error feedback */}
         <Snackbar open={toast.open} autoHideDuration={4000} onClose={closeToast}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
           <Alert severity={toast.severity} onClose={closeToast}

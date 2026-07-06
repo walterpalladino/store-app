@@ -62,6 +62,10 @@ const API = {
     // Empty/missing `q` returns all of the caller's orders (same as list).
     search: (q) => `${BASE}/api/orders/search?q=${encodeURIComponent(q ?? '')}`,
     byId:   (id) => `${BASE}/api/orders/${id}`,
+    // ADMIN — list every possible order status (GET), and force an order to a
+    // given status (POST { status }), an emergency override of the lifecycle.
+    statusOptions: `${BASE}/api/orders/status`,
+    setStatus:     (id) => `${BASE}/api/orders/${id}/status`,
   },
 
   // Checkout — registers an order from the caller's cart and starts a Stripe
