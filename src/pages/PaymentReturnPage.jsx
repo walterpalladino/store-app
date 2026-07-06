@@ -1,6 +1,8 @@
-import { useNavigate, useLocation, useSearchParams, Navigate } from 'react-router-dom'
-import { Box, Container, Typography } from '@mui/material'
-import { isSuccess, REDIRECT_STATUS } from '../services/checkoutService'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams, Navigate } from 'react-router-dom'
+import { Box, Container, Typography, CircularProgress } from '@mui/material'
+import { useAuth } from '../context/AuthContext'
+import { isSuccess, getOrderBySession } from '../services/checkoutService'
 import OrderResult from '../components/OrderResult'
 
 // Map the checkout order (created by POST /api/checkout) into the shape
@@ -9,6 +11,7 @@ import OrderResult from '../components/OrderResult'
 function toResult(order, statusLabel) {
   return {
     id:              order?.id,
+    orderId:         order?.orderId,
     status:          statusLabel,
     discountedTotal: order?.discountedTotal ?? order?.total,
     address:         order?.address,
@@ -23,32 +26,38 @@ function toResult(order, statusLabel) {
 }
 
 // ---------------------------------------------------------------------------
-// PaymentReturnPage — the callback the embedded checkout redirects to.
+// PaymentReturnPage — the **success** callback Stripe's hosted checkout
+// redirects to (the `successUrl` we sent to POST /api/checkout).
 //
-// The order was already created by POST /api/checkout (this is why the front
-// end no longer creates orders — no more duplicates). Here we simply read the
-// settled payment outcome and display it.
-//
-// URL: /checkout/return?session_id=...&redirect_status=succeeded|failed|canceled
+// Reaching this URL means the payment form was submitted; the order was already
+// created by POST /api/checkout and settles asynchronously via the checkout
+// webhook (backend-owned). This is a full browser redirect back from Stripe, so
+// there is no React navigation state — we only get `?session_id=…` and look the
+// order up by it to display the outcome.
 // ---------------------------------------------------------------------------
 export default function PaymentReturnPage() {
   const navigate = useNavigate()
-  const location = useLocation()
+  const { authFetch } = useAuth()
   const [params] = useSearchParams()
+  const sessionId = params.get('session_id')
 
-  const sessionId      = params.get('session_id')
-  const redirectStatus = params.get('redirect_status')
-  const { order }      = location.state || {}
+  const [order, setOrder]     = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  // Nothing to show (direct navigation) → back to the cart.
-  if (!sessionId && !order) return <Navigate to="/cart" replace />
+  useEffect(() => {
+    let alive = true
+    getOrderBySession(authFetch, sessionId)
+      .then((o) => { if (alive) setOrder(o) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [authFetch, sessionId])
 
-  const label = isSuccess(redirectStatus)
-    ? 'Payment Completed'
-    : redirectStatus === REDIRECT_STATUS.CANCELED
-      ? 'Cancelled'
-      : 'Payment could not be processed'
+  // Direct navigation with no session and nothing to show → back to the cart.
+  if (!sessionId && !loading && !order) return <Navigate to="/cart" replace />
 
+  // Arriving here is a success; the webhook may not have flipped the order to
+  // `paid` yet, so show "Payment Completed" once settled, else "Processing".
+  const label = order && isSuccess(order.status) ? 'Payment Completed' : 'Processing'
   const result = toResult(order, label)
 
   return (
@@ -64,11 +73,18 @@ export default function PaymentReturnPage() {
       <Box sx={{ height: '2px', background: 'linear-gradient(90deg, transparent, #c8a96e, transparent)' }} />
 
       <Container maxWidth="md">
-        <OrderResult
-          result={result}
-          onBack={() => navigate('/cart')}
-          onContinueShopping={() => navigate('/')}
-        />
+        {loading ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 12 }}>
+            <CircularProgress size={28} sx={{ color: 'secondary.dark' }} />
+            <Typography sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>Confirming your payment…</Typography>
+          </Box>
+        ) : (
+          <OrderResult
+            result={result}
+            onBack={() => navigate('/account')}
+            onContinueShopping={() => navigate('/')}
+          />
+        )}
       </Container>
     </Box>
   )

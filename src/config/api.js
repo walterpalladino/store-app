@@ -16,6 +16,15 @@
 
 const BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
 
+// Public origin of THIS front end. Stripe hosted checkout redirects the browser
+// back to absolute URLs on our own site, so we need our own origin to build
+// them. Defaults to the running browser origin (works in local dev with no
+// config) and can be overridden per environment — e.g. a public deploy URL, or
+// when the app is served behind a proxy/tunnel whose origin differs.
+const APP_ORIGIN = (import.meta.env.VITE_PUBLIC_APP_URL
+  ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173')
+).replace(/\/$/, '')
+
 const API = {
 
   auth: {
@@ -55,9 +64,19 @@ const API = {
     byId:   (id) => `${BASE}/api/orders/${id}`,
   },
 
-  // Checkout — registers an order from the caller's cart and starts the (mock)
-  // Stripe embedded session. POST, no body. Returns { order, checkout }.
+  // Checkout — registers an order from the caller's cart and starts a Stripe
+  // **hosted** Checkout Session. POST { successUrl, cancelUrl }; returns
+  // { order, checkout } where checkout.url is the hosted page to redirect to.
   checkout: `${BASE}/api/checkout`,
+
+  // Absolute callback URLs Stripe redirects the browser back to after the
+  // hosted payment page. The backend appends ?session_id={CHECKOUT_SESSION_ID}
+  // to successUrl; cancelUrl is used as-is. Default to this app's own routes;
+  // override the whole URL via env for deployments that need a fixed public URL.
+  checkoutReturn: {
+    successUrl: import.meta.env.VITE_CHECKOUT_SUCCESS_URL || `${APP_ORIGIN}/checkout/return`,
+    cancelUrl:  import.meta.env.VITE_CHECKOUT_CANCEL_URL  || `${APP_ORIGIN}/checkout/cancel`,
+  },
 
   // Refund — admin-only. POST { orderId } to start a refund on a paid order.
   // Returns { order, refund }; settles asynchronously via a Stripe webhook.

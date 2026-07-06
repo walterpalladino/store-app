@@ -279,18 +279,27 @@ export default function CheckoutPage() {
   const canSubmit = !loadingProfile && !submitting && items.length > 0
 
   // Place the order via POST /api/checkout. The backend builds the order from
-  // the cart, starts the (mock) Stripe session and clears the cart; we then hand
-  // off to the embedded payment step with the returned checkout session.
+  // the cart, starts the Stripe **hosted** Checkout Session and clears the cart;
+  // we then hand off by redirecting the browser to the hosted payment page
+  // (`checkout.url`). Stripe redirects back to our success/cancel routes.
   const handleSubmit = async () => {
     if (!canSubmit) return
     setSubmitting(true); setSubmitError('')
     try {
-      const { order, checkout, resumed } = await startCheckout(authFetch)
-      checkingOutRef.current = true
-      // A fresh checkout empties the cart backend-side, so sync local state. A
-      // resumed order left the cart untouched — don't discard those items.
-      if (!resumed) clearCart()
-      navigate('/checkout/payment', { state: { order, checkout } })
+      const { successUrl, cancelUrl } = API.checkoutReturn
+      const { checkout, resumed } = await startCheckout(authFetch, { successUrl, cancelUrl })
+      if (checkout?.url) {
+        // A fresh checkout empties the cart backend-side, so sync local state.
+        checkingOutRef.current = true
+        clearCart()
+        window.location.assign(checkout.url)   // hand off to Stripe's hosted page
+        return
+      }
+      // 409 → an order is already awaiting payment; the hosted session can't be
+      // resumed by redirect, so tell the user rather than dead-ending.
+      setSubmitError(resumed
+        ? 'You already have an order awaiting payment — see Purchase History in your account.'
+        : 'Could not start checkout. Please try again.')
     } catch (err) {
       logger.error('Checkout failed:', err.message ?? err)
       setSubmitError(err.message || 'Could not start checkout. Please try again.')

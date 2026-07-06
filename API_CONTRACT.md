@@ -1100,23 +1100,29 @@ curl http://localhost:3000/api/orders/5 -H "Authorization: Bearer <token>"
 ## Checkout 🔒
 
 Placing an order is a **separate operation** from the orders resource. Checkout
-requires a Bearer token and takes **no request body** — the order is built from
-the caller's cart.
+requires a Bearer token. The order is built from the caller's cart; the body
+carries only the front-end **callback URLs** Stripe redirects to.
 
 ### POST `/api/checkout` 🔒
 
 Register an order from the caller's cart and start payment. The flow: register the
-order as `draft` from the cart snapshot → create a Stripe **embedded** Checkout
+order as `draft` from the cart snapshot → create a Stripe **hosted** Checkout
 Session → clear the cart and move the order to `pending_payment`. If the
 payment processor fails to start a session, the draft order is deleted (so it does
-not linger as an open order) and the error is surfaced. The
-response carries both the order and the checkout session; the front end renders
-the embedded checkout with `checkout.clientSecret` (see the
-[Stripe embedded quickstart](https://docs.stripe.com/checkout/embedded/quickstart?lang=node&client=react)).
+not linger as an open order) and the error is surfaced. The response carries both
+the order and the checkout session; the front end **redirects the browser to
+`checkout.url`** to collect payment.
 Full flow and payment-platform details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
+**Body (required):** `successUrl`, `cancelUrl` — where Stripe sends the customer
+after the payment form succeeds or is cancelled. `successUrl` is templated with
+`?session_id={CHECKOUT_SESSION_ID}`; `cancelUrl` is used as-is.
+
 ```bash
-curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:3000/api/checkout \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "successUrl": "https://shop.example/checkout/ok", "cancelUrl": "https://shop.example/cart" }'
 ```
 
 **201**
@@ -1129,9 +1135,10 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
     "checkout": {
       "provider": "stripe",
       "sessionId": "cs_test_…",
-      "clientSecret": "cs_test_…_secret_…",
+      "url": "https://checkout.stripe.com/c/pay/cs_test_…",
       "status": "open",
-      "returnUrl": "http://localhost:5173/checkout/return?session_id={CHECKOUT_SESSION_ID}",
+      "successUrl": "https://shop.example/checkout/ok?session_id={CHECKOUT_SESSION_ID}",
+      "cancelUrl": "https://shop.example/cart",
       "amountTotal": 2400,
       "currency": "usd"
     }
@@ -1139,8 +1146,9 @@ curl -X POST http://localhost:3000/api/checkout -H "Authorization: Bearer <token
 }
 ```
 
+**401** — missing/invalid token
 **409** — you already have an open order (`draft` / `pending_payment`)
-**422** — your cart is empty (nothing to order)
+**422** — missing `successUrl`/`cancelUrl`, or your cart is empty (nothing to order)
 
 > **Real or mock Stripe.** When `STRIPE_SECRET_KEY` is set the session is created
 > via the real Stripe API (`StripeService`); when it is empty a Stripe-shaped

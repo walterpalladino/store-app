@@ -13,8 +13,8 @@ import LoginPage                from './pages/LoginPage'
 import CartPage                 from './pages/CartPage'
 import CheckoutPage             from './pages/CheckoutPage'
 import UserPage                 from './pages/user/UserPage'
-import PaymentPage              from './pages/PaymentPage'
 import PaymentReturnPage        from './pages/PaymentReturnPage'
+import CheckoutCancelPage       from './pages/CheckoutCancelPage'
 import AdminLoginPage           from './pages/admin/AdminLoginPage'
 import AdminPage                from './pages/admin/AdminPage'
 
@@ -54,9 +54,9 @@ function App() {
                   }
                 />
 
-                {/* ── Payment step (focused, no customer Navbar) ── */}
-                <Route path="/checkout/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
+                {/* ── Stripe hosted-checkout callbacks (focused, no Navbar) ── */}
                 <Route path="/checkout/return"  element={<ProtectedRoute><PaymentReturnPage /></ProtectedRoute>} />
+                <Route path="/checkout/cancel"  element={<ProtectedRoute><CheckoutCancelPage /></ProtectedRoute>} />
 
                 {/* ── Customer section (standalone login) ── */}
                 <Route path="/login" element={<LoginPage />} />
