@@ -213,16 +213,6 @@ export default function AdminLoginPage() {
               sx={fieldSx}
             />
 
-            {/* Demo hint */}
-            <Box sx={{ bgcolor: 'rgba(200,169,110,0.08)', border: '1px solid rgba(200,169,110,0.2)', borderRadius: 1, px: 2, py: 1.25 }}>
-              <Typography sx={{ fontSize: '0.62rem', color: 'rgba(245,240,232,0.4)', mb: 0.25, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: '"DM Sans", sans-serif' }}>
-                Demo credentials
-              </Typography>
-              <Typography sx={{ fontSize: '0.78rem', color: 'rgba(245,240,232,0.7)', fontFamily: 'monospace' }}>
-                username: <strong style={{ color: '#c8a96e' }}>emilys</strong> · password: <strong style={{ color: '#c8a96e' }}>emilyspass</strong>
-              </Typography>
-            </Box>
-
             <Button
               type="submit"
               variant="contained"

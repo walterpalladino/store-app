@@ -5,13 +5,13 @@ import {
   IconButton, Tooltip, ListItemIcon, ListItemText, Divider,
 } from '@mui/material'
 import {
-  LogoutRounded, KeyRounded, ManageAccountsOutlined,
+  LogoutRounded, ManageAccountsOutlined,
   ShoppingBagOutlined, FavoriteBorderOutlined,
 } from '@mui/icons-material'
 import { useAuth } from '../context/AuthContext'
 
 export default function UserMenu() {
-  const { user, accessToken, tokenPayload, logout } = useAuth()
+  const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [anchorEl, setAnchorEl] = useState(null)
   const open = Boolean(anchorEl)
@@ -33,10 +33,6 @@ export default function UserMenu() {
     logout()
     navigate('/')
   }
-
-  const expiryLabel = tokenPayload?.exp
-    ? new Date(tokenPayload.exp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null
 
   const menuItemSx = {
     px: 2.5,
@@ -150,47 +146,6 @@ export default function UserMenu() {
             </Box>
           </Box>
         </Box>
-
-        {/* ── JWT token info ── */}
-        {accessToken && (
-          <Box sx={{ px: 2.5, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
-              <KeyRounded sx={{ fontSize: 13, color: 'secondary.dark' }} />
-              <Typography sx={{ fontSize: '0.62rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', fontWeight: 500 }}>
-                JWT Token
-              </Typography>
-            </Box>
-            <Box
-              sx={{
-                bgcolor: 'rgba(26,26,26,0.04)',
-                borderRadius: 1,
-                p: 1,
-                fontFamily: 'monospace',
-                fontSize: '0.58rem',
-                color: 'text.secondary',
-                wordBreak: 'break-all',
-                lineHeight: 1.5,
-                maxHeight: 48,
-                overflow: 'hidden',
-                position: 'relative',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: 0, left: 0, right: 0,
-                  height: 16,
-                  background: 'linear-gradient(transparent, rgba(250,247,242,0.95))',
-                },
-              }}
-            >
-              {accessToken}
-            </Box>
-            {expiryLabel && (
-              <Typography sx={{ fontSize: '0.62rem', color: 'text.secondary', mt: 0.5 }}>
-                Expires at <strong>{expiryLabel}</strong>
-              </Typography>
-            )}
-          </Box>
-        )}
 
         {/* ── Navigation actions ── */}
         <Box sx={{ pt: 0.75 }}>

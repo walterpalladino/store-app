@@ -128,24 +128,6 @@ function LoginForm({ onSuccess }) {
         }
       />
 
-      {/* Demo hint */}
-      <Box
-        sx={{
-          bgcolor: 'rgba(200,169,110,0.1)',
-          border: '1px solid rgba(200,169,110,0.3)',
-          borderRadius: 1,
-          px: 2,
-          py: 1.25,
-        }}
-      >
-        <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', mb: 0.25, letterSpacing: '0.04em', textTransform: 'uppercase', fontWeight: 500 }}>
-          Demo credentials
-        </Typography>
-        <Typography sx={{ fontSize: '0.78rem', color: 'text.primary', fontFamily: 'monospace' }}>
-          username: <strong>emilys</strong> &nbsp;·&nbsp; password: <strong>emilyspass</strong>
-        </Typography>
-      </Box>
-
       <Button
         type="submit"
         variant="contained"
@@ -294,7 +276,7 @@ function RegisterSuccess({ user, onGoToLogin }) {
           Your account has been registered. Please sign in to continue.
         </Typography>
         <Alert severity="info" sx={{ textAlign: 'left', fontSize: '0.75rem', mb: 3 }}>
-          This is a mock API — your account won’t persist. Use the demo credentials on the sign-in tab.
+          Your account is ready — sign in to continue.
         </Alert>
         <Button variant="contained" fullWidth onClick={onGoToLogin} sx={{ py: 1.4, fontSize: '0.72rem', letterSpacing: '0.1em' }}>
           Go to Sign In
