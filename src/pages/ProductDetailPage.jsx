@@ -270,6 +270,27 @@ export default function ProductDetailPage() {
               {product.description}
             </Typography>
 
+            {/* Tags */}
+            {product.tags?.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3 }}>
+                {product.tags.map((tag) => (
+                  <Chip
+                    key={tag}
+                    label={tag}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      fontSize: '0.68rem',
+                      letterSpacing: '0.04em',
+                      color: 'text.secondary',
+                      borderColor: 'divider',
+                      bgcolor: 'rgba(26,26,26,0.02)',
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
+
             {/* Stock */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
               <Box

@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Box, Typography, Divider, TextField, InputAdornment, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Avatar, Rating, Select, MenuItem, FormControl, InputLabel,
   Alert, Button, Pagination, Fade, Drawer, IconButton, Tooltip,
-  Switch, Grid, CircularProgress, Snackbar,
+  Switch, Grid, CircularProgress, Snackbar, Autocomplete,
 } from '@mui/material'
 import {
   SearchOutlined, RefreshOutlined, CloseOutlined,
@@ -42,7 +42,7 @@ const fieldSx = {
 // ImageManager below and productImageService).
 const EMPTY_FORM = {
   title: '', description: '', price: '', discountPercentage: '',
-  stock: '', category: '', brand: '', sku: '',
+  stock: '', category: '', brand: '', sku: '', tags: [],
   weight: '', warrantyInformation: '', returnPolicy: '',
   minimumOrderQuantity: '', availabilityStatus: 'In Stock',
   size: '', color: '', attr1: '', attr2: '', attr3: '', attr4: '',
@@ -63,6 +63,7 @@ function formFromProduct(p) {
     category:             p.category             ?? '',
     brand:                p.brand                ?? '',
     sku:                  p.sku                  ?? '',
+    tags:                 Array.isArray(p.tags) ? p.tags : [],
     weight:               p.weight               ?? '',
     warrantyInformation:  p.warrantyInformation  ?? '',
     returnPolicy:         p.returnPolicy         ?? '',
@@ -430,7 +431,7 @@ function ImageManager({ productId, merchantFetch, staged, setStaged, onDerivedCh
 }
 
 // ── Product form drawer (Add + Edit) ─────────────────────────────────────────
-function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }) {
+function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged, categories = [], tags = [] }) {
   const { merchantFetch } = useMerchantAuth()
   const isOpen = isNew || !!product
   const [form,    setForm]     = useState(() => isNew ? { ...EMPTY_FORM } : formFromProduct(product ?? {}))
@@ -505,6 +506,7 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }
         category:             form.category.trim(),
         brand:                form.brand.trim(),
         sku:                  form.sku.trim(),
+        tags:                 Array.isArray(form.tags) ? form.tags : [],
         // Image fields are read-only/derived — never sent on create/update.
         weight:               form.weight !== '' ? Number(form.weight) : undefined,
         warrantyInformation:  form.warrantyInformation.trim(),
@@ -549,6 +551,24 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }
     } catch (err) { setApiError(err.message || 'Save failed. Please try again.') }
     finally { setSaving(false) }
   }
+
+  // Category is a restricted Autocomplete (see below) — rendered separately from
+  // the generic text fields. Options come from the loaded category list; the
+  // current value is kept as an option so editing a product whose category is
+  // not (yet) in the list still shows correctly.
+  const categoryOptions = useMemo(() => {
+    const slugs = categories.map((c) => (typeof c === 'string' ? c : c.slug)).filter(Boolean)
+    return form.category && !slugs.includes(form.category) ? [form.category, ...slugs] : slugs
+  }, [categories, form.category])
+
+  // Tag options are the existing tag names. Any already-assigned tags not in the
+  // list are kept so an existing product's tags always show (and aren't dropped
+  // on save), while new selections are restricted to the list (no free entry).
+  const tagOptions = useMemo(() => {
+    const names = tags.map((t) => (typeof t === 'string' ? t : t.name)).filter(Boolean)
+    const extra = (form.tags || []).filter((t) => !names.includes(t))
+    return [...names, ...extra]
+  }, [tags, form.tags])
 
   const FIELDS = [
     { name: 'title',                label: 'Product Title *',    type: 'text',   xs: 12, sm: 12 },
@@ -621,15 +641,40 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }
 
           {FIELDS.map(({ name, label, type, xs, sm, hint }) => (
             <Grid item xs={xs} sm={sm} key={name}>
-              <TextField
-                fullWidth size="small" name={name} label={label}
-                type={type === 'number' ? 'number' : 'text'}
-                value={form[name]} onChange={handleChange}
-                error={!!errors[name]}
-                helperText={errors[name] ?? hint ?? undefined}
-                inputProps={type === 'number' ? { min: 0, step: ['price', 'discountPercentage', 'weight'].includes(name) ? 0.01 : 1 } : undefined}
-                sx={fieldSx}
-              />
+              {name === 'category' ? (
+                // Restrict the category to values from the loaded list; typing
+                // filters the options. No free-solo — only existing categories.
+                <Autocomplete
+                  size="small"
+                  options={categoryOptions}
+                  value={form.category || null}
+                  onChange={(_, val) => {
+                    setForm((p) => ({ ...p, category: val ?? '' }))
+                    setErrors((p) => ({ ...p, category: undefined }))
+                    setApiError('')
+                  }}
+                  isOptionEqualToValue={(o, v) => o === v}
+                  getOptionLabel={(o) => String(o ?? '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params} label={label}
+                      error={!!errors.category}
+                      helperText={errors.category ?? 'Pick from your categories'}
+                      sx={fieldSx}
+                    />
+                  )}
+                />
+              ) : (
+                <TextField
+                  fullWidth size="small" name={name} label={label}
+                  type={type === 'number' ? 'number' : 'text'}
+                  value={form[name]} onChange={handleChange}
+                  error={!!errors[name]}
+                  helperText={errors[name] ?? hint ?? undefined}
+                  inputProps={type === 'number' ? { min: 0, step: ['price', 'discountPercentage', 'weight'].includes(name) ? 0.01 : 1 } : undefined}
+                  sx={fieldSx}
+                />
+              )}
             </Grid>
           ))}
 
@@ -644,6 +689,26 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }
                 ))}
               </Select>
             </FormControl>
+          </Grid>
+
+          {/* Tags — multi-select restricted to existing tags */}
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              size="small"
+              options={tagOptions}
+              value={form.tags || []}
+              onChange={(_, val) => { setForm((p) => ({ ...p, tags: val })); setApiError('') }}
+              isOptionEqualToValue={(o, v) => o === v}
+              getOptionLabel={(o) => String(o ?? '')}
+              renderInput={(params) => (
+                <TextField
+                  {...params} label="Tags"
+                  helperText="Select from existing tags"
+                  sx={fieldSx}
+                />
+              )}
+            />
           </Grid>
 
           {/* Description */}
@@ -681,6 +746,7 @@ export default function AdminProducts() {
   const [search,     setSearch]     = useState('')
   const [category,   setCategory]   = useState('all')
   const [categories, setCategories] = useState([])
+  const [tags,       setTags]       = useState([])
   const [page,       setPage]       = useState(1)
   const [selected,   setSelected]   = useState(null)
   const [editMode,   setEditMode]   = useState(false)
@@ -694,6 +760,13 @@ export default function AdminProducts() {
       .then((r) => r.json())
       .then((body) => { const d = body.success ? body.data : body; setCategories(Array.isArray(d) ? d : []) })
       .catch((err) => logger.error('Failed to load categories:', err.message ?? err))
+  }, [])
+
+  useEffect(() => {
+    fetch(API.tags.list)
+      .then((r) => r.json())
+      .then((body) => { const d = body.success ? body.data : body; setTags(Array.isArray(d) ? d : []) })
+      .catch((err) => logger.error('Failed to load tags:', err.message ?? err))
   }, [])
 
   const loadProducts = useCallback(async () => {
@@ -947,6 +1020,8 @@ export default function AdminProducts() {
           <ProductFormDrawer
             product={selected}
             isNew={false}
+            categories={categories}
+            tags={tags}
             onClose={() => setSelected(null)}
             onSaved={(saved) => handleSaved(saved, false)}
             onImagesChanged={handleImagesChanged}
@@ -958,6 +1033,8 @@ export default function AdminProducts() {
           <ProductFormDrawer
             product={null}
             isNew={true}
+            categories={categories}
+            tags={tags}
             onClose={() => setAddOpen(false)}
             onSaved={(saved) => handleSaved(saved, true)}
           />

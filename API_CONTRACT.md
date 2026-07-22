@@ -127,6 +127,12 @@ invalid token returns **401**.
 | Images   | GET    | `/api/products/:id/images/:imageId`    | —    |
 | Images   | POST   | `/api/products/:id/images`             | 🔒 ADMIN |
 | Images   | DELETE | `/api/products/:id/images/:imageId`    | 🔒 ADMIN |
+| Tags     | GET    | `/api/tags`                            | —    |
+| Tags     | GET    | `/api/tags/:id`                        | —    |
+| Tags     | POST   | `/api/tags`                            | 🔒 ADMIN |
+| Tags     | PUT    | `/api/tags/:id`                        | 🔒 ADMIN |
+| Tags     | PATCH  | `/api/tags/:id`                        | 🔒 ADMIN |
+| Tags     | DELETE | `/api/tags/:id`                        | 🔒 ADMIN |
 | Carts    | GET    | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | POST   | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | PUT    | `/api/users/:id/cart`                  | 🔒   |
@@ -931,6 +937,102 @@ curl -X DELETE http://localhost:3000/api/products/1/images/10 \
 **200** → success envelope wrapping the deleted image object.
 **401** — missing/invalid token · **403** — not an admin
 **404** — image not found for that product
+
+---
+
+## Tags
+
+Tags are a normalized list used to label and relate products. A **tag object** is
+just an id and a unique name:
+
+```json
+{ "id": 1, "name": "beauty" }
+```
+
+Reads are public; create/update/delete require an authenticated **ADMIN**. Tag
+names are trimmed and unique (case-insensitive) — creating or renaming to an
+existing name returns `409`.
+
+> The initial tag list is backfilled from the existing `products.tags` values by
+> `node database/import-product-tags.mjs` (idempotent, skips duplicates).
+
+### GET `/api/tags`
+
+List all tags, ordered by name.
+
+```bash
+curl http://localhost:3000/api/tags
+```
+
+**200**
+
+```json
+{ "success": true, "data": [ { "id": 1, "name": "beauty" }, { "id": 2, "name": "mascara" } ] }
+```
+
+---
+
+### GET `/api/tags/:id`
+
+Get a single tag by id.
+
+```bash
+curl http://localhost:3000/api/tags/1
+```
+
+**200** → success envelope wrapping the tag object.
+**404** — tag not found → `{ "message": "..." }`
+
+---
+
+### POST `/api/tags` 🔒 ADMIN
+
+Create a tag. Requires an authenticated ADMIN.
+
+```bash
+curl -X POST http://localhost:3000/api/tags \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "waterproof" }'
+```
+
+**Required:** `name`.
+
+**201** → success envelope wrapping the created tag object.
+**401** — missing/invalid token · **403** — not an admin
+**409** — a tag with that name already exists · **422** — `name` missing
+
+---
+
+### PUT / PATCH `/api/tags/:id` 🔒 ADMIN
+
+Rename a tag. `PUT` and `PATCH` behave identically. Requires an authenticated ADMIN.
+
+```bash
+curl -X PATCH http://localhost:3000/api/tags/1 \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "cosmetics" }'
+```
+
+**200** → success envelope wrapping the updated tag object.
+**401** — missing/invalid token · **403** — not an admin
+**404** — tag not found · **409** — the new name is already taken · **422** — `name` missing
+
+---
+
+### DELETE `/api/tags/:id` 🔒 ADMIN
+
+Delete a tag. Returns the deleted tag. Requires an authenticated ADMIN.
+
+```bash
+curl -X DELETE http://localhost:3000/api/tags/1 \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+**200** → success envelope wrapping the deleted tag object.
+**401** — missing/invalid token · **403** — not an admin
+**404** — tag not found
 
 ---
 

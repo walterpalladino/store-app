@@ -106,6 +106,14 @@ const API = {
     imageById:  (id, imageId) => `${BASE}/api/products/${id}/images/${imageId}`,    // GET one · DELETE (ADMIN)
   },
 
+  // Tags — a top-level, normalized list used to label products. Reads are
+  // public; create/update/delete are ADMIN-only. A tag is `{ id, name }`;
+  // names are unique (case-insensitive).
+  tags: {
+    list: `${BASE}/api/tags`,               // GET list · POST create (ADMIN)
+    byId: (id) => `${BASE}/api/tags/${id}`, // GET one · PUT/PATCH/DELETE (ADMIN)
+  },
+
   // Orders are read-only — created only by the checkout flow, never posted directly.
   orders: {
     list:   `${BASE}/api/orders`,

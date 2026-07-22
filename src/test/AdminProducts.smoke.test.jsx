@@ -31,7 +31,7 @@ describe('AdminProducts — mount + Generate SKU', () => {
         return Promise.resolve(mockJson({ success: true, data: { sku: 'GEN-ABC-123' } }))
       }
       if (String(url).includes('/categories')) {
-        return Promise.resolve(mockJson({ success: true, data: [] }))
+        return Promise.resolve(mockJson({ success: true, data: [{ slug: 'smartphones', name: 'Smartphones' }] }))
       }
       // product list
       return Promise.resolve(mockJson({ success: true, data: { products: [], total: 0, skip: 0, limit: 15 } }))
@@ -46,8 +46,13 @@ describe('AdminProducts — mount + Generate SKU', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add New Product/i }))
     expect(await screen.findByRole('button', { name: /Generate SKU/i })).toBeInTheDocument()
 
-    // Fill category + brand, then generate
-    fireEvent.change(screen.getByLabelText(/Category \*/i), { target: { value: 'smartphones' } })
+    // Category is a restricted Autocomplete — type to filter, then pick the option
+    const catInput = screen.getByLabelText(/Category \*/i)
+    fireEvent.change(catInput, { target: { value: 'smart' } })
+    fireEvent.click(await screen.findByRole('option', { name: 'smartphones' }))
+    await waitFor(() => expect(catInput).toHaveValue('smartphones'))
+
+    // Fill brand, then generate
     fireEvent.change(screen.getByLabelText(/^Brand$/i), { target: { value: 'Apple' } })
     fireEvent.click(screen.getByRole('button', { name: /Generate SKU/i }))
 

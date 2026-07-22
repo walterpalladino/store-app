@@ -67,6 +67,12 @@ describe('API config', () => {
     })
   })
 
+  // ── Tags ──────────────────────────────────────────────────────────────────
+  describe('tags endpoints', () => {
+    it('builds list URL', () => expect(API.tags.list).toBe('http://localhost:3000/api/tags'))
+    it('builds byId URL', () => expect(API.tags.byId(1)).toBe('http://localhost:3000/api/tags/1'))
+  })
+
   // ── Images / media ──────────────────────────────────────────────────────────
   describe('media config + resolveImageUrl', () => {
     it('returns absolute URLs unchanged', async () => {
