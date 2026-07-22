@@ -1,13 +1,27 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { ThemeProvider } from '@mui/material'
+import { MemoryRouter } from 'react-router-dom'
 import theme from '../theme/theme'
 import AdminProducts from '../pages/admin/AdminProducts'
+import { MerchantAuthProvider } from '../context/MerchantAuthContext'
 
 afterEach(() => { vi.restoreAllMocks() })
 
 function mockJson(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+// AdminProducts reads merchantFetch from MerchantAuthContext, so it must render
+// inside the provider (and a router, which the provider's logout path uses).
+function renderAdmin() {
+  return render(
+    <MemoryRouter>
+      <MerchantAuthProvider>
+        <ThemeProvider theme={theme}><AdminProducts /></ThemeProvider>
+      </MerchantAuthProvider>
+    </MemoryRouter>
+  )
 }
 
 describe('AdminProducts — mount + Generate SKU', () => {
@@ -23,9 +37,7 @@ describe('AdminProducts — mount + Generate SKU', () => {
       return Promise.resolve(mockJson({ success: true, data: { products: [], total: 0, skip: 0, limit: 15 } }))
     })
 
-    render(
-      <ThemeProvider theme={theme}><AdminProducts /></ThemeProvider>
-    )
+    renderAdmin()
 
     // Page mounted
     expect(screen.getByText('Products')).toBeInTheDocument()

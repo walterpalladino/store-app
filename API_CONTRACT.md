@@ -123,6 +123,10 @@ invalid token returns **401**.
 | Reviews  | PUT    | `/api/products/:id/reviews/:reviewId`  | —    |
 | Reviews  | PATCH  | `/api/products/:id/reviews/:reviewId`  | —    |
 | Reviews  | DELETE | `/api/products/:id/reviews/:reviewId`  | —    |
+| Images   | GET    | `/api/products/:id/images`             | —    |
+| Images   | GET    | `/api/products/:id/images/:imageId`    | —    |
+| Images   | POST   | `/api/products/:id/images`             | 🔒 ADMIN |
+| Images   | DELETE | `/api/products/:id/images/:imageId`    | 🔒 ADMIN |
 | Carts    | GET    | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | POST   | `/api/users/:id/cart`                  | 🔒   |
 | Carts    | PUT    | `/api/users/:id/cart`                  | 🔒   |
@@ -416,8 +420,9 @@ The **product object** returned by most endpoints:
   "minimumOrderQuantity": 1,
   "barcode": "0123456789",
   "qrCode": "https://example.com/qr.png",
-  "thumbnail": "https://example.com/thumb.png",
-  "images": ["https://example.com/1.png"],
+  "thumbnail": "https://cdn.example.com/products/BMW-PNC-001/<uuid>.webp",
+  "primaryImage": "https://cdn.example.com/products/BMW-PNC-001/<uuid>.webp",
+  "images": ["https://cdn.example.com/products/BMW-PNC-001/<uuid>.webp"],
   "isDeleted": false,
   "deletedOn": null
 }
@@ -426,6 +431,14 @@ The **product object** returned by most endpoints:
 > `availabilityStatus` is computed from stock. The `GET /sku/:sku` variant omits
 > `id`, `isDeleted`, and `deletedOn`. `color`, `size` and `attr1`–`attr4` are
 > free-form string attributes (default `""`).
+>
+> `thumbnail`, `primaryImage`, and `images` are **read-only, derived** fields —
+> they are built at read time from the product's rows in the `product_images`
+> table (see the [Images](#images) endpoints), not stored on the product:
+> `thumbnail` is the `THUMBNAIL`-typed image's URL, `primaryImage` the `PRIMARY`
+> one, and `images` the remaining (`OTHER`) image URLs. Each is `""` / `[]` when
+> the product has no image of that type. They are **not** accepted in create /
+> update bodies — manage images through the image upload endpoints.
 
 ### GET `/api/products`
 
@@ -476,6 +489,8 @@ curl -X POST http://localhost:3000/api/products \
 ```
 
 **Required:** `title`, `price`, `category`. All other writable product fields are optional.
+The image fields (`thumbnail`, `primaryImage`, `images`) are **not** writable here — images
+are managed through the [image endpoints](#images).
 
 **201** → success envelope wrapping the full product object.
 
@@ -798,6 +813,124 @@ curl -X DELETE http://localhost:3000/api/products/1/reviews/5
 ```
 
 **200** → success envelope wrapping the deleted review object.
+
+---
+
+## Images
+
+Images are nested under a product. The binary files are **not** stored in the
+database — they live in the configured storage backend (`IMAGE_STORAGE_PROVIDER`,
+default `local` file system) under `products/<sku>/<uuid>.webp`. On upload
+the file is validated, auto-rotated, downscaled, and **re-encoded to WebP**.
+
+The **image object** (the response never exposes the internal `storageKey`; use
+`url` instead):
+
+```json
+{
+  "id": 10,
+  "productId": 1,
+  "url": "https://api.example.com/media/products/BEA-ESS-ESS-001/018f9a2c-7b3e-7c21-9e2a-3f1b6d4e5a90.webp",
+  "originalFilename": "photo.png",
+  "mimeType": "image/webp",
+  "sizeBytes": 20480,
+  "width": 1200,
+  "height": 800,
+  "altText": "Front view",
+  "sortOrder": 0,
+  "imageType": "PRIMARY",
+  "createdAt": "2026-07-21T12:00:00.000Z"
+}
+```
+
+- The database stores only the image UUID; the `url` is rederived at read time
+  as `${IMAGE_PUBLIC_BASE_URL}/products/<sku>/<uuid>.<ext>` (the extension comes
+  from the stored file — always `.webp`).
+- `imageType` is one of `THUMBNAIL`, `PRIMARY`, `OTHER`. A product has **at most
+  one** `PRIMARY` and **at most one** `THUMBNAIL` — uploading a new image of that
+  type demotes the previous one to `OTHER`.
+- The first image uploaded for a product defaults to `PRIMARY`; subsequent images
+  default to `OTHER`. Deleting the `PRIMARY` promotes the next remaining image.
+
+### GET `/api/products/:id/images`
+
+List all images for a product (primary first, then by `sortOrder`).
+
+```bash
+curl http://localhost:3000/api/products/1/images
+```
+
+**200**
+
+```json
+{
+  "success": true,
+  "data": { "images": [ { "id": 10, "productId": 1, "imageType": "PRIMARY" } ] }
+}
+```
+
+**404** — product not found
+
+---
+
+### GET `/api/products/:id/images/:imageId`
+
+Fetch a single image's metadata.
+
+```bash
+curl http://localhost:3000/api/products/1/images/10
+```
+
+**200** → success envelope wrapping a single image object.
+**404** — image not found for that product
+
+---
+
+### POST `/api/products/:id/images` 🔒 ADMIN
+
+Upload an image. Body is **`multipart/form-data`** (not JSON).
+
+```bash
+curl -X POST http://localhost:3000/api/products/1/images \
+  -H "Authorization: Bearer <admin-token>" \
+  -F "image=@./photo.png" \
+  -F "altText=Front view" \
+  -F "imageType=PRIMARY"
+```
+
+**Multipart parts**
+
+| Part      | Type   | Required | Notes                                                                          |
+| --------- | ------ | -------- | ------------------------------------------------------------------------------ |
+| image     | file   | yes      | The image file. Accepted: JPEG, PNG, WebP, GIF, AVIF.                          |
+| altText   | text   | no       | Alternative text.                                                              |
+| sortOrder | text   | no       | Integer; defaults to the next position after existing images.                  |
+| imageType | text   | no       | `THUMBNAIL` / `PRIMARY` / `OTHER` (case-insensitive). Defaults to `PRIMARY` for the first image, else `OTHER`. A new `PRIMARY`/`THUMBNAIL` demotes the previous one. |
+
+The uploaded file is optimized and stored as WebP, so the response `mimeType` is
+always `image/webp` regardless of the source type. The field name for the file
+part may be anything — the first file part in the request is used.
+
+**201** → success envelope wrapping the created image object.
+**401** — missing/invalid token · **403** — not an admin
+**413** — file exceeds `IMAGE_MAX_SIZE_BYTES`
+**415** — request was not `multipart/form-data`
+**422** — no file part, unsupported image type, or invalid `imageType` value
+
+---
+
+### DELETE `/api/products/:id/images/:imageId` 🔒 ADMIN
+
+Delete an image (removes both the metadata row and the stored file).
+
+```bash
+curl -X DELETE http://localhost:3000/api/products/1/images/10 \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+**200** → success envelope wrapping the deleted image object.
+**401** — missing/invalid token · **403** — not an admin
+**404** — image not found for that product
 
 ---
 

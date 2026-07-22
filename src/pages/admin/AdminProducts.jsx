@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Box, Typography, Divider, TextField, InputAdornment, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -11,11 +11,16 @@ import {
   InventoryOutlined, TrendingUpOutlined, StarOutlined,
   AddOutlined, EditOutlined, SaveOutlined, LockOutlined,
   ImageOutlined, DriveFileRenameOutlineOutlined, AutoFixHighOutlined,
+  CloudUploadOutlined, DeleteOutlineOutlined, AddPhotoAlternateOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
 import { productFromCents, unitsToCents } from '../../utils/money'
 import logger from '../../utils/logger'
+import { useMerchantAuth } from '../../context/MerchantAuthContext'
+import {
+  IMAGE_TYPES, fetchProductImages, uploadProductImage, deleteProductImage,
+} from '../../services/productImageService'
 
 const PAGE_SIZE = 15
 
@@ -31,9 +36,13 @@ const fieldSx = {
   '& .Mui-disabled': { '-webkit-text-fill-color': '#6b6560 !important' },
 }
 
+// Images (`thumbnail`, `primaryImage`, `images`) are read-only, derived fields
+// on the product — they are NOT part of the editable form and never written on
+// product create/update. They are managed through the image endpoints (see
+// ImageManager below and productImageService).
 const EMPTY_FORM = {
   title: '', description: '', price: '', discountPercentage: '',
-  stock: '', category: '', brand: '', sku: '', thumbnail: '',
+  stock: '', category: '', brand: '', sku: '',
   weight: '', warrantyInformation: '', returnPolicy: '',
   minimumOrderQuantity: '', availabilityStatus: 'In Stock',
   size: '', color: '', attr1: '', attr2: '', attr3: '', attr4: '',
@@ -54,7 +63,6 @@ function formFromProduct(p) {
     category:             p.category             ?? '',
     brand:                p.brand                ?? '',
     sku:                  p.sku                  ?? '',
-    thumbnail:            p.thumbnail            ?? '',
     weight:               p.weight               ?? '',
     warrantyInformation:  p.warrantyInformation  ?? '',
     returnPolicy:         p.returnPolicy         ?? '',
@@ -66,6 +74,21 @@ function formFromProduct(p) {
     attr2:                p.attr2                ?? '',
     attr3:                p.attr3                ?? '',
     attr4:                p.attr4                ?? '',
+  }
+}
+
+// Rebuild the product's read-only image fields from a list of image objects,
+// mirroring how the backend derives them, so the table/detail views can update
+// immediately after an upload or delete without a full reload.
+function deriveImageFields(images) {
+  const list = Array.isArray(images) ? images : []
+  const primary = list.find((i) => i.imageType === 'PRIMARY')
+  const thumb   = list.find((i) => i.imageType === 'THUMBNAIL')
+  const others  = list.filter((i) => i.imageType === 'OTHER')
+  return {
+    primaryImage: primary?.url ?? '',
+    thumbnail:    thumb?.url ?? primary?.url ?? '',
+    images:       others.map((i) => i.url),
   }
 }
 
@@ -184,23 +207,255 @@ function ReadOnlyDrawer({ product, onClose, onEditClick }) {
   )
 }
 
+// ── Image manager ────────────────────────────────────────────────────────────
+// Manages a product's images through the dedicated image endpoints. One reusable
+// upload form covers all three slots — the admin picks the type (Primary /
+// Thumbnail / Other) per image.
+//   • Edit mode (productId set): reads the live image list and uploads/deletes
+//     against the server immediately.
+//   • New mode (no productId yet): stages files locally; the parent uploads them
+//     once the product has been created and has an id.
+const IMAGE_TYPE_COLORS = {
+  PRIMARY:   { bg: 'rgba(74,124,89,0.12)',  fg: 'success.main'   },
+  THUMBNAIL: { bg: 'rgba(200,169,110,0.14)', fg: 'secondary.dark' },
+  OTHER:     { bg: 'rgba(26,26,26,0.06)',    fg: 'text.secondary' },
+}
+
+function ImageTile({ src, imageType, altText, onDelete, disabled }) {
+  const c = IMAGE_TYPE_COLORS[imageType] ?? IMAGE_TYPE_COLORS.OTHER
+  return (
+    <Box sx={{ position: 'relative', borderRadius: 1.5, overflow: 'hidden', border: '1px solid', borderColor: 'divider', bgcolor: '#f0ece3', aspectRatio: '1' }}>
+      <Box component="img" src={src} alt={altText || imageType}
+        sx={{ width: '100%', height: '100%', objectFit: 'contain', p: 0.5 }}
+        onError={(e) => { e.target.style.visibility = 'hidden' }} />
+      <Chip label={imageType} size="small"
+        sx={{ position: 'absolute', top: 4, left: 4, height: 16, fontSize: '0.52rem', letterSpacing: '0.05em', bgcolor: c.bg, color: c.fg }} />
+      <Tooltip title="Remove image" arrow>
+        <span style={{ position: 'absolute', top: 2, right: 2 }}>
+          <IconButton size="small" onClick={onDelete} disabled={disabled}
+            sx={{ bgcolor: 'rgba(250,247,242,0.9)', '&:hover': { bgcolor: '#fff' } }}>
+            <DeleteOutlineOutlined sx={{ fontSize: 15, color: 'error.main' }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Box>
+  )
+}
+
+function ImageManager({ productId, merchantFetch, staged, setStaged, onDerivedChange }) {
+  const isNew = !productId
+  const [images,  setImages]  = useState([])
+  const [loading, setLoading] = useState(!isNew)
+  const [busy,    setBusy]    = useState(false)
+  const [err,     setErr]     = useState('')
+  const [draft,   setDraft]   = useState(null)   // { file, preview, altText, imageType }
+  const fileRef = useRef(null)
+
+  const count = isNew ? staged.length : images.length
+
+  // Load the live image list in edit mode.
+  useEffect(() => {
+    if (isNew) return
+    let alive = true
+    setLoading(true)
+    fetchProductImages(productId)
+      .then((imgs) => { if (alive) setImages(imgs) })
+      .catch((e) => { if (alive) setErr(e.message) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [productId, isNew])
+
+  const pickFile = () => { setErr(''); fileRef.current?.click() }
+
+  const onFileChange = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''   // allow re-picking the same file
+    if (!file) return
+    // Match the backend default: the first image is PRIMARY, the rest OTHER.
+    const defaultType = count === 0 ? 'PRIMARY' : 'OTHER'
+    setDraft({ file, preview: URL.createObjectURL(file), altText: '', imageType: defaultType })
+  }
+
+  const clearDraft = () => {
+    if (draft?.preview) URL.revokeObjectURL(draft.preview)
+    setDraft(null)
+  }
+
+  const confirmDraft = async () => {
+    if (!draft) return
+    if (isNew) {
+      // Keep the object URL alive for the staged thumbnail — revoked when removed
+      // or when the drawer closes.
+      setStaged((prev) => [...prev, { ...draft, key: `${Date.now()}-${Math.random()}` }])
+      setDraft(null)
+      return
+    }
+    setBusy(true); setErr('')
+    try {
+      await uploadProductImage(merchantFetch, productId, {
+        file: draft.file, altText: draft.altText, imageType: draft.imageType,
+      })
+      // A new PRIMARY/THUMBNAIL demotes the previous one, so refetch the list.
+      const fresh = await fetchProductImages(productId)
+      setImages(fresh)
+      onDerivedChange?.(deriveImageFields(fresh))
+      clearDraft()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const removeStaged = (key) => {
+    setStaged((prev) => {
+      const gone = prev.find((s) => s.key === key)
+      if (gone?.preview) URL.revokeObjectURL(gone.preview)
+      return prev.filter((s) => s.key !== key)
+    })
+  }
+
+  const removeServer = async (imageId) => {
+    setBusy(true); setErr('')
+    try {
+      await deleteProductImage(merchantFetch, productId, imageId)
+      const fresh = await fetchProductImages(productId)
+      setImages(fresh)
+      onDerivedChange?.(deriveImageFields(fresh))
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  // Hero preview: the primary/first image (staged or live).
+  const hero = isNew
+    ? staged[0]?.preview
+    : (images.find((i) => i.imageType === 'PRIMARY') ?? images[0])?.url
+
+  return (
+    <Box sx={{ mb: 3 }}>
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFileChange} />
+
+      {/* Clickable hero — click to add/replace an image */}
+      <Box
+        onClick={draft ? undefined : pickFile}
+        sx={{
+          bgcolor: '#f0ece3', borderRadius: 2, height: 160, mb: 1.5, overflow: 'hidden',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: draft ? 'default' : 'pointer', position: 'relative',
+          border: '1px dashed', borderColor: 'rgba(26,26,26,0.18)',
+          transition: 'border-color 0.2s, background 0.2s',
+          '&:hover': draft ? {} : { borderColor: 'secondary.main', bgcolor: '#ece7dc' },
+        }}
+      >
+        {hero
+          ? <Box component="img" src={hero} alt="preview" sx={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} onError={(e) => { e.target.style.display = 'none' }} />
+          : <Box sx={{ textAlign: 'center', px: 2 }}>
+              <AddPhotoAlternateOutlined sx={{ fontSize: 40, color: 'rgba(26,26,26,0.25)', mb: 1 }} />
+              <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>Click to upload a product image</Typography>
+            </Box>}
+      </Box>
+
+      {err && <Alert severity="error" sx={{ mb: 1.5, fontSize: '0.76rem' }} onClose={() => setErr('')}>{err}</Alert>}
+
+      {/* Upload sub-form — shown once a file is picked. Reused for every type. */}
+      {draft && (
+        <Box sx={{ p: 2, mb: 2, border: '1px solid', borderColor: 'rgba(200,169,110,0.4)', borderRadius: 2, bgcolor: 'rgba(200,169,110,0.05)' }}>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Box component="img" src={draft.preview} alt="to upload"
+              sx={{ width: 64, height: 64, objectFit: 'contain', borderRadius: 1, bgcolor: '#f0ece3', flexShrink: 0 }} />
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <TextField
+                fullWidth size="small" label="Alt text" value={draft.altText}
+                onChange={(e) => setDraft((d) => ({ ...d, altText: e.target.value }))}
+                sx={fieldSx}
+              />
+              <FormControl fullWidth size="small" sx={fieldSx}>
+                <InputLabel sx={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.82rem' }}>Image Type</InputLabel>
+                <Select label="Image Type" value={draft.imageType}
+                  onChange={(e) => setDraft((d) => ({ ...d, imageType: e.target.value }))}
+                  sx={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.85rem' }}>
+                  {IMAGE_TYPES.map((t) => (
+                    <MenuItem key={t} value={t} sx={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.85rem' }}>
+                      {t === 'PRIMARY' ? 'Primary Image' : t === 'THUMBNAIL' ? 'Thumbnail Image' : 'Other Image'}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1, mt: 1.5, justifyContent: 'flex-end' }}>
+            <Button size="small" onClick={clearDraft} disabled={busy}
+              sx={{ fontSize: '0.68rem', letterSpacing: '0.05em' }}>Cancel</Button>
+            <Button size="small" variant="contained" onClick={confirmDraft} disabled={busy}
+              startIcon={busy ? <CircularProgress size={13} sx={{ color: 'inherit' }} /> : <CloudUploadOutlined sx={{ fontSize: 15 }} />}
+              sx={{ fontSize: '0.68rem', letterSpacing: '0.05em' }}>
+              {busy ? 'Uploading…' : isNew ? 'Add Image' : 'Upload'}
+            </Button>
+          </Box>
+        </Box>
+      )}
+
+      {/* Existing / staged images */}
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}><CircularProgress size={20} /></Box>
+      ) : count > 0 ? (
+        <>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography sx={{ fontSize: '0.6rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'text.secondary' }}>
+              {isNew ? 'Images to upload' : 'Product Images'} ({count})
+            </Typography>
+            <Button size="small" startIcon={<AddOutlined sx={{ fontSize: 15 }} />} onClick={pickFile} disabled={busy || !!draft}
+              sx={{ fontSize: '0.66rem', letterSpacing: '0.05em', color: 'secondary.dark' }}>Add image</Button>
+          </Box>
+          <Grid container spacing={1}>
+            {isNew
+              ? staged.map((s) => (
+                  <Grid item xs={4} sm={3} key={s.key}>
+                    <ImageTile src={s.preview} imageType={s.imageType} altText={s.altText} onDelete={() => removeStaged(s.key)} disabled={busy} />
+                  </Grid>
+                ))
+              : images.map((img) => (
+                  <Grid item xs={4} sm={3} key={img.id}>
+                    <ImageTile src={img.url} imageType={img.imageType} altText={img.altText} onDelete={() => removeServer(img.id)} disabled={busy} />
+                  </Grid>
+                ))}
+          </Grid>
+        </>
+      ) : null}
+
+      {isNew && (
+        <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary', mt: 1.5, fontStyle: 'italic' }}>
+          Images are uploaded when the product is created.
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
 // ── Product form drawer (Add + Edit) ─────────────────────────────────────────
-function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
+function ProductFormDrawer({ product, isNew, onClose, onSaved, onImagesChanged }) {
+  const { merchantFetch } = useMerchantAuth()
   const isOpen = isNew || !!product
   const [form,    setForm]     = useState(() => isNew ? { ...EMPTY_FORM } : formFromProduct(product ?? {}))
   const [errors,  setErrors]   = useState({})
   const [saving,  setSaving]   = useState(false)
   const [apiError, setApiError] = useState('')
   const [genSku,  setGenSku]   = useState(false)
+  // Images staged locally for a *new* product — uploaded once it has an id.
+  const [staged,  setStaged]   = useState([])
+  const stagedRef = useRef(staged)
+  stagedRef.current = staged
 
   useEffect(() => {
     if (isNew)          setForm({ ...EMPTY_FORM })
     else if (product)   setForm(formFromProduct(product))
     setErrors({}); setApiError('')
+    // Drop any locally-staged previews when a different product is opened.
+    setStaged((prev) => { prev.forEach((s) => s.preview && URL.revokeObjectURL(s.preview)); return [] })
     // Intentionally keyed on product identity — reset only when a *different*
     // product is opened, not on every re-render that yields a new object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id, isNew])
+
+  // Revoke any still-staged object URLs when the drawer unmounts (closes).
+  useEffect(() => () => { stagedRef.current.forEach((s) => s.preview && URL.revokeObjectURL(s.preview)) }, [])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -250,7 +505,7 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
         category:             form.category.trim(),
         brand:                form.brand.trim(),
         sku:                  form.sku.trim(),
-        thumbnail:            form.thumbnail.trim(),
+        // Image fields are read-only/derived — never sent on create/update.
         weight:               form.weight !== '' ? Number(form.weight) : undefined,
         warrantyInformation:  form.warrantyInformation.trim(),
         returnPolicy:         form.returnPolicy.trim(),
@@ -265,11 +520,32 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
       }
       const url    = isNew ? API.products.add : API.products.byId(product.id)
       const method = isNew ? 'POST' : 'PATCH'
-      const res   = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      // These are ADMIN endpoints — go through merchantFetch so the Bearer token
+      // is attached (a 401 signs the admin out and redirects to admin login).
+      const res   = await merchantFetch(url, { method, body: JSON.stringify(body) })
       const saved = await unwrap(res)  // { id, title, price, ... } in cents (throws on success:false)
+      const productId = saved.id ?? product?.id
+
+      // A new product's images were staged locally — upload them now that we have
+      // an id, then derive the read-only image fields for the merged row.
+      let derived = {}
+      if (isNew && staged.length && productId) {
+        const uploaded = []
+        for (const s of staged) {
+          try {
+            uploaded.push(await uploadProductImage(merchantFetch, productId, {
+              file: s.file, altText: s.altText, imageType: s.imageType,
+            }))
+          } catch (e) {
+            setApiError(`Product created, but "${s.file.name}" failed to upload: ${e.message}`)
+          }
+        }
+        derived = deriveImageFields(uploaded)
+      }
+
       // Both `body` and the API response carry price in cents; convert the
       // merged result back to units so it matches the rest of the table state.
-      onSaved(productFromCents({ ...body, id: saved.id ?? product?.id ?? Date.now(), rating: product?.rating ?? 0, ...saved }))
+      onSaved(productFromCents({ ...body, id: productId ?? Date.now(), rating: product?.rating ?? 0, ...saved, ...derived }))
     } catch (err) { setApiError(err.message || 'Save failed. Please try again.') }
     finally { setSaving(false) }
   }
@@ -291,7 +567,6 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
     { name: 'weight',               label: 'Weight (g)',         type: 'number', xs: 12, sm: 6  },
     { name: 'warrantyInformation',  label: 'Warranty',           type: 'text',   xs: 12, sm: 6  },
     { name: 'returnPolicy',         label: 'Return Policy',      type: 'text',   xs: 12, sm: 12 },
-    { name: 'thumbnail',            label: 'Thumbnail URL',      type: 'text',   xs: 12, sm: 12 },
   ]
 
   return (
@@ -307,16 +582,14 @@ function ProductFormDrawer({ product, isNew, onClose, onSaved }) {
         onClose={onClose}
       />
       <Box sx={{ flex: 1, overflowY: 'auto', p: 3 }}>
-        {/* Thumbnail preview */}
-        <Box sx={{ bgcolor: '#f0ece3', borderRadius: 2, height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 3, overflow: 'hidden' }}>
-          {form.thumbnail
-            ? <Box component="img" src={form.thumbnail} alt="preview" sx={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} onError={(e) => { e.target.style.display = 'none' }} />
-            : <Box sx={{ textAlign: 'center' }}>
-                <ImageOutlined sx={{ fontSize: 40, color: 'rgba(26,26,26,0.2)', mb: 1 }} />
-                <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>Enter a thumbnail URL below</Typography>
-              </Box>
-          }
-        </Box>
+        {/* Images — Primary / Thumbnail / Other, managed via the image endpoints */}
+        <ImageManager
+          productId={isNew ? null : product?.id}
+          merchantFetch={merchantFetch}
+          staged={staged}
+          setStaged={setStaged}
+          onDerivedChange={isNew ? undefined : (derived) => onImagesChanged?.(product.id, derived)}
+        />
 
         {apiError && (
           <Alert severity="error" sx={{ mb: 2.5, fontSize: '0.78rem' }} onClose={() => setApiError('')}>{apiError}</Alert>
@@ -458,6 +731,13 @@ export default function AdminProducts() {
   const handleEditFromReadOnly = () => {
     setEditMode(true)
     // selected stays set — ProductFormDrawer will open with it
+  }
+
+  // An image was uploaded/deleted for a product — refresh its derived image
+  // fields in the table (and the open drawer's selection) immediately.
+  const handleImagesChanged = (id, derived) => {
+    setProducts((prev) => prev.map((p) => p.id === id ? { ...p, ...derived } : p))
+    setSelected((sel) => sel && sel.id === id ? { ...sel, ...derived } : sel)
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
@@ -669,6 +949,7 @@ export default function AdminProducts() {
             isNew={false}
             onClose={() => setSelected(null)}
             onSaved={(saved) => handleSaved(saved, false)}
+            onImagesChanged={handleImagesChanged}
           />
         )}
 

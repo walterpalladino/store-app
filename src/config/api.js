@@ -25,6 +25,50 @@ const APP_ORIGIN = (import.meta.env.VITE_PUBLIC_APP_URL
   ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173')
 ).replace(/\/$/, '')
 
+// Image / media storage. Product image URLs returned by the API are normally
+// absolute (`${IMAGE_PUBLIC_BASE_URL}/products/<sku>/<uuid>.webp`). The storage
+// backend may live on a different origin/port than the API, so:
+//   • VITE_IMAGE_BASE_URL       — prefix used to resolve *relative* image URLs
+//     (leave empty when the API already returns absolute URLs).
+//   • VITE_IMAGE_ALLOWED_ORIGINS — comma-separated allow-list of image origins
+//     (url:port) the app is expected to load images from. These are the origins
+//     that must have CORS enabled on the storage backend; kept here so the list
+//     lives in one place and can be tuned per environment without code changes.
+const IMAGE_BASE = (import.meta.env.VITE_IMAGE_BASE_URL ?? '').replace(/\/$/, '')
+
+const IMAGE_ALLOWED_ORIGINS = (import.meta.env.VITE_IMAGE_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean)
+
+// Origin of the backend that serves the image files. In dev we route images on
+// this origin through the Vite proxy (see vite.config server.proxy) so <img>
+// loads are same-origin and not blocked cross-origin by the browser.
+function originOf(u) { try { return new URL(u).origin } catch { return '' } }
+const MEDIA_ORIGIN = originOf(IMAGE_BASE || BASE)
+
+/**
+ * Resolve a product-image URL to something an <img src> can load.
+ *
+ *  - Dev: an absolute URL on the backend's own origin is rewritten to a
+ *    same-origin relative path so it flows through the Vite `/media` proxy —
+ *    this dodges the browser blocking cross-origin image loads (CORS/CORP) when
+ *    the backend runs on another port. **CORS itself is a server-side concern;
+ *    no frontend env var can enable it** — in production the URL is left
+ *    absolute and the storage backend must send the right CORS/CORP headers.
+ *  - Otherwise: absolute (http/https or protocol-relative) URLs are returned
+ *    as-is; a relative path is prefixed with VITE_IMAGE_BASE_URL, else the API base.
+ */
+export function resolveImageUrl(url) {
+  if (!url) return ''
+  if (import.meta.env.DEV && MEDIA_ORIGIN && url.startsWith(`${MEDIA_ORIGIN}/`)) {
+    return url.slice(MEDIA_ORIGIN.length)   // e.g. "/media/products/…/uuid.webp"
+  }
+  if (/^(https?:)?\/\//i.test(url)) return url
+  const base = IMAGE_BASE || BASE
+  return `${base}/${String(url).replace(/^\//, '')}`
+}
+
 const API = {
 
   auth: {
@@ -53,6 +97,13 @@ const API = {
     categories:   `${BASE}/api/products/categories`,                                        // GET list · POST create (ADMIN)
     categoryBySlug: (slug) => `${BASE}/api/products/categories/${encodeURIComponent(slug)}`, // PUT/PATCH/DELETE (ADMIN)
     categoryList: `${BASE}/api/products/category-list`,
+    // Images are a separate resource nested under a product. Read (GET) is
+    // public; upload (POST multipart/form-data) and delete are ADMIN-only.
+    // `thumbnail`/`primaryImage`/`images` on the product object are read-only,
+    // derived fields — never written on product create/update. Manage the
+    // binaries here instead.
+    images:     (id)          => `${BASE}/api/products/${id}/images`,               // GET list · POST upload (ADMIN)
+    imageById:  (id, imageId) => `${BASE}/api/products/${id}/images/${imageId}`,    // GET one · DELETE (ADMIN)
   },
 
   // Orders are read-only — created only by the checkout flow, never posted directly.
@@ -85,6 +136,12 @@ const API = {
   // Refund — admin-only. POST { orderId } to start a refund on a paid order.
   // Returns { order, refund }; settles asynchronously via a Stripe webhook.
   refund: `${BASE}/api/refund`,
+
+  // Image storage config (see resolveImageUrl + the VITE_IMAGE_* env vars).
+  media: {
+    base:           IMAGE_BASE,
+    allowedOrigins: IMAGE_ALLOWED_ORIGINS,
+  },
 }
 
 export default API

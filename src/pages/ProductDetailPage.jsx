@@ -95,7 +95,12 @@ export default function ProductDetailPage() {
   if (!product) return null
 
   const discountedPrice = (product.price * (1 - product.discountPercentage / 100)).toFixed(2)
-  const images = product.images?.length ? product.images : [product.thumbnail]
+  // Gallery: primary first, then the other images, with the thumbnail as a
+  // fallback. `primaryImage`/`images`/`thumbnail` are read-only derived fields
+  // on the product (built from the product's images — see API_CONTRACT Images).
+  const images = [product.primaryImage, ...(product.images ?? []), product.thumbnail]
+    .filter(Boolean)
+    .filter((url, i, arr) => arr.indexOf(url) === i)
 
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>

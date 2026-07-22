@@ -57,6 +57,59 @@ describe('API config', () => {
         'http://localhost:3000/api/products/category/beauty'
       )
     })
+
+    it('builds images list URL', () => {
+      expect(API.products.images(7)).toBe('http://localhost:3000/api/products/7/images')
+    })
+
+    it('builds image-by-id URL', () => {
+      expect(API.products.imageById(7, 10)).toBe('http://localhost:3000/api/products/7/images/10')
+    })
+  })
+
+  // ── Images / media ──────────────────────────────────────────────────────────
+  describe('media config + resolveImageUrl', () => {
+    it('returns absolute URLs unchanged', async () => {
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'media')
+      expect(resolveImageUrl('https://cdn.example.com/a.webp')).toBe('https://cdn.example.com/a.webp')
+    })
+
+    it('leaves protocol-relative URLs unchanged', async () => {
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'proto')
+      expect(resolveImageUrl('//cdn.example.com/a.webp')).toBe('//cdn.example.com/a.webp')
+    })
+
+    it('prefixes a relative path with the API base when no image base is set', async () => {
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'rel')
+      expect(resolveImageUrl('products/SKU/a.webp')).toBe('http://localhost:3000/products/SKU/a.webp')
+    })
+
+    it('prefixes with VITE_IMAGE_BASE_URL when provided', async () => {
+      vi.stubEnv('VITE_IMAGE_BASE_URL', 'https://media.example.com/')
+      vi.resetModules()
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'imgbase')
+      expect(resolveImageUrl('/products/SKU/a.webp')).toBe('https://media.example.com/products/SKU/a.webp')
+    })
+
+    it('returns empty string for a falsy URL', async () => {
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'empty')
+      expect(resolveImageUrl('')).toBe('')
+      expect(resolveImageUrl(undefined)).toBe('')
+    })
+
+    it('rewrites a backend-origin URL to a same-origin relative path in dev (for the proxy)', async () => {
+      // import.meta.env.DEV is true under vitest, matching the dev runtime.
+      const { resolveImageUrl } = await import('../config/api.js?t=' + Date.now() + 'proxy')
+      expect(resolveImageUrl('http://localhost:3000/media/products/SKU/uuid.webp'))
+        .toBe('/media/products/SKU/uuid.webp')
+    })
+
+    it('parses the allowed-origins list', async () => {
+      vi.stubEnv('VITE_IMAGE_ALLOWED_ORIGINS', 'http://localhost:3000, https://cdn.example.com/ ')
+      vi.resetModules()
+      const mod = await import('../config/api.js?t=' + Date.now() + 'origins')
+      expect(mod.default.media.allowedOrigins).toEqual(['http://localhost:3000', 'https://cdn.example.com'])
+    })
   })
 
   // ── Orders (read-only) ─────────────────────────────────────────────────────

@@ -82,12 +82,16 @@ export function MerchantAuthProvider({ children }) {
     const token = authState.accessToken
     if (!token) throw new Error('Not authenticated')
 
+    // Let the browser set the multipart boundary for FormData bodies (image
+    // uploads) — forcing application/json there would corrupt the request.
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+
     const res = await fetch(url, {
       ...options,
       headers: {
+        ...(!isFormData && { 'Content-Type': 'application/json' }),
         ...(options.headers || {}),
-        Authorization:   `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
       },
     })
 

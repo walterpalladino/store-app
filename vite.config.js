@@ -1,12 +1,29 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import terminal from 'vite-plugin-terminal'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Backend origin that serves the API and the product image files (/media/…).
+  const env = loadEnv(mode, process.cwd(), '')
+  const mediaTarget = (env.VITE_IMAGE_BASE_URL || env.VITE_API_BASE || 'http://localhost:3000').replace(/\/$/, '')
+
+  return {
   // `terminal` exposes `virtual:terminal`, letting the client logger mirror
   // output to the dev-server terminal (gated by VITE_LOG_TO_SERVER). In a
   // production build the plugin strips the calls to a no-op.
   plugins: [react(), terminal({ output: ['terminal'] })],
+
+  // Dev-only: proxy the backend's product image files through the dev server so
+  // <img> loads are same-origin. Cross-origin image loads from the backend
+  // (a different port) are otherwise blocked by the browser (CORS/CORP) unless
+  // the backend sets the right headers — which it must for production anyway.
+  // resolveImageUrl() (src/config/api.js) rewrites same-backend-origin image
+  // URLs to relative /media/… paths in dev so they hit this proxy.
+  server: {
+    proxy: {
+      '/media': { target: mediaTarget, changeOrigin: true },
+    },
+  },
 
   test: {
     environment:  'jsdom',
@@ -46,4 +63,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

@@ -10,6 +10,8 @@
 // between (subtotals, tax, discounts, `fmt(...)`) stays in decimal units.
 // ---------------------------------------------------------------------------
 
+import { resolveImageUrl } from '../config/api'
+
 /** Integer cents → decimal currency units (e.g. 499 → 4.99). */
 export const centsToUnits = (cents) => (Number(cents) || 0) / 100
 
@@ -20,10 +22,21 @@ export const unitsToCents = (units) => Math.round((Number(units) || 0) * 100)
 // left untouched so absent fields don't collapse to `0`.
 const conv = (v) => (v == null ? v : centsToUnits(v))
 
-/** Normalise a product from the API: `price` cents → units. */
+/**
+ * Normalise a product from the API: `price` cents → units, and resolve the
+ * read-only image fields (`thumbnail`, `primaryImage`, `images`) so they load
+ * in the browser (see resolveImageUrl — routes backend images through the dev
+ * proxy to avoid cross-origin blocking).
+ */
 export function productFromCents(product) {
   if (!product || typeof product !== 'object') return product
-  return { ...product, price: conv(product.price) }
+  return {
+    ...product,
+    price: conv(product.price),
+    ...(product.thumbnail    != null && { thumbnail:    resolveImageUrl(product.thumbnail) }),
+    ...(product.primaryImage != null && { primaryImage: resolveImageUrl(product.primaryImage) }),
+    ...(Array.isArray(product.images) && { images: product.images.map(resolveImageUrl) }),
+  }
 }
 
 /** Normalise a cart from the API: item and total money fields cents → units. */
