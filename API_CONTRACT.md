@@ -435,8 +435,10 @@ The **product object** returned by most endpoints:
 ```
 
 > `availabilityStatus` is computed from stock. The `GET /sku/:sku` variant omits
-> `id`, `isDeleted`, and `deletedOn`. `color`, `size` and `attr1`–`attr4` are
-> free-form string attributes (default `""`).
+> `id`, `isDeleted`, and `deletedOn`. Both single-product detail variants
+> (`GET /:id` and `GET /sku/:sku`) add a `relatedProducts` array — it is absent
+> from the list, search and category responses. `color`, `size` and `attr1`–`attr4`
+> are free-form string attributes (default `""`).
 >
 > `thumbnail`, `primaryImage`, and `images` are **read-only, derived** fields —
 > they are built at read time from the product's rows in the `product_images`
@@ -637,13 +639,16 @@ curl "http://localhost:3000/api/products/category/stationery?limit=10"
 
 ### GET `/api/products/sku/:sku`
 
-Get a product by SKU. Reduced object (no `id`, `isDeleted`, `deletedOn`).
+Get a product by SKU. Reduced object (no `id`, `isDeleted`, `deletedOn`), **plus**
+a `relatedProducts` array — same rule as `GET /:id` (up to 5 products in the same
+category sharing at least one tag). The related entries are full product objects
+and **do** keep their `id` so the front-end can link to them.
 
 ```bash
 curl http://localhost:3000/api/products/sku/BMW-PNC-001
 ```
 
-**200** → success envelope wrapping the SKU product object.
+**200** → success envelope wrapping the SKU product object (with `relatedProducts`).
 **404** — not found
 
 ---
@@ -675,7 +680,32 @@ curl -X POST http://localhost:3000/api/products/sku/generate \
 curl http://localhost:3000/api/products/1
 ```
 
-**200** → success envelope wrapping the full product object.
+**200** → success envelope wrapping the full product object, **plus** a
+`relatedProducts` array (this endpoint only — it is absent from the list, search
+and category responses).
+
+`relatedProducts` holds up to **5** other products in the **same category** that
+**share at least one tag** with this product, ordered by rating (best first).
+Each entry is a normal product object (with its own `thumbnail` / `primaryImage`
+/ `images`) but **without** a nested `relatedProducts` — the list never recurses.
+It is `[]` when the product has no tags or nothing else matches.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "title": "Essence Mascara Lash Princess",
+    "category": "beauty",
+    "tags": ["beauty", "mascara"],
+    "relatedProducts": [
+      { "id": 3, "title": "Powder Canister", "category": "beauty" },
+      { "id": 4, "title": "Red Lipstick", "category": "beauty" }
+    ]
+  }
+}
+```
+
 **404** — not found
 
 ---

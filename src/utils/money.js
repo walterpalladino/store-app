@@ -36,6 +36,9 @@ export function productFromCents(product) {
     ...(product.thumbnail    != null && { thumbnail:    resolveImageUrl(product.thumbnail) }),
     ...(product.primaryImage != null && { primaryImage: resolveImageUrl(product.primaryImage) }),
     ...(Array.isArray(product.images) && { images: product.images.map(resolveImageUrl) }),
+    // Single-product detail responses embed a `relatedProducts` array of full
+    // product objects — normalise each the same way (they never recurse further).
+    ...(Array.isArray(product.relatedProducts) && { relatedProducts: product.relatedProducts.map(productFromCents) }),
   }
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   Container, Grid, Box, Typography, Button, Chip, Rating,
@@ -36,6 +36,59 @@ function DetailSkeleton() {
   )
 }
 
+// ── Related product card (compact, horizontal strip) ────────────────────────
+function RelatedCard({ product }) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const discounted = (product.price * (1 - (product.discountPercentage ?? 0) / 100)).toFixed(2)
+  const image = product.primaryImage || product.thumbnail || product.images?.[0]
+
+  return (
+    <Box
+      onClick={() => navigate(`/product/${product.id}`, { state: { from: location.pathname + location.search } })}
+      sx={{
+        flex: '0 0 auto',
+        width: { xs: 156, sm: 190 },
+        cursor: 'pointer',
+        scrollSnapAlign: 'start',
+        '&:hover .related-img': { transform: 'scale(1.06)' },
+        '&:hover .related-title': { color: 'secondary.dark' },
+      }}
+    >
+      <Box sx={{ bgcolor: '#f0ece3', borderRadius: 2, overflow: 'hidden', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 1.25 }}>
+        {image && (
+          <Box
+            component="img"
+            className="related-img"
+            src={image}
+            alt={product.title}
+            sx={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', p: 2, transition: 'transform 0.5s ease' }}
+          />
+        )}
+      </Box>
+      <Typography sx={{ fontSize: '0.6rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'secondary.dark', mb: 0.25 }}>
+        {product.category?.replace(/-/g, ' ')}
+      </Typography>
+      <Typography
+        className="related-title"
+        sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '0.95rem', fontWeight: 400, lineHeight: 1.3, mb: 0.75, transition: 'color 0.2s', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '2.5em' }}
+      >
+        {product.title}
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+        <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1.05rem', fontWeight: 500 }}>
+          ${discounted}
+        </Typography>
+        {product.discountPercentage > 1 && (
+          <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', textDecoration: 'line-through' }}>
+            ${product.price.toFixed(2)}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  )
+}
+
 export default function ProductDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -45,6 +98,15 @@ export default function ProductDetailPage() {
   const [selectedImage, setSelectedImage] = useState(0)
   const [tabValue, setTabValue] = useState(0)
   const [snackOpen, setSnackOpen] = useState(false)
+
+  // Navigating to a related product changes the :id but keeps this component
+  // mounted — scroll back to the top and reset the selected image/tab so the new
+  // product opens like a fresh page.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
+    setSelectedImage(0)
+    setTabValue(0)
+  }, [id])
 
   const { isLoggedIn } = useAuth()
   const { addItem, isInCart, getQuantity } = useCart()
@@ -379,6 +441,47 @@ export default function ProductDetailPage() {
             </Grid>
           </Grid>
         </Grid>
+
+        {/* Related products */}
+        {product.relatedProducts?.length > 0 && (
+          <Box
+            sx={{
+              mt: 8,
+              bgcolor: 'background.paper',
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 3,
+              p: { xs: 3, md: 4.5 },
+            }}
+          >
+            <Typography
+              variant="h4"
+              sx={{ fontFamily: '"Cormorant Garamond", serif', fontWeight: 400, fontSize: { xs: '1.4rem', md: '1.8rem' }, mb: 0.5 }}
+            >
+              You May Also Like
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3, fontSize: '0.8rem' }}>
+              More from {product.category?.replace(/-/g, ' ')}
+            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                gap: { xs: 2, sm: 3 },
+                overflowX: 'auto',
+                pb: 1.5,
+                scrollSnapType: 'x proximity',
+                // Slim, on-brand scrollbar
+                '&::-webkit-scrollbar': { height: 6 },
+                '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(26,26,26,0.15)', borderRadius: 3 },
+                '&::-webkit-scrollbar-track': { bgcolor: 'transparent' },
+              }}
+            >
+              {product.relatedProducts.map((rp) => (
+                <RelatedCard key={rp.id} product={rp} />
+              ))}
+            </Box>
+          </Box>
+        )}
 
         {/* Tabs: Specs & Reviews */}
         <Box sx={{ mt: 8 }}>
