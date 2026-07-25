@@ -129,6 +129,8 @@ describe('API config', () => {
   // ── Payments (read-only, no list-all route) ────────────────────────────────
   describe('payments endpoints', () => {
     it('builds byId URL', () => expect(API.payments.byId(11)).toBe('http://localhost:3000/api/payments/11'))
+    it('builds the admin status-options URL', () => expect(API.payments.statusOptions).toBe('http://localhost:3000/api/payments/status'))
+    it('builds the admin setStatus URL', () => expect(API.payments.setStatus(11)).toBe('http://localhost:3000/api/payments/11/status'))
     it('has no list URL (a payment is reachable only via its order or its id)', () =>
       expect(API.payments.list).toBeUndefined())
   })

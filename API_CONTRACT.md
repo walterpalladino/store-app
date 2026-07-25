@@ -144,7 +144,9 @@ invalid token returns **401**.
 | Orders   | GET    | `/api/orders/:id`                      | 🔒   |
 | Orders   | GET    | `/api/orders/:id/payments`             | 🔒   |
 | Orders   | POST   | `/api/orders/:id/status`               | 🔒 ADMIN |
+| Payments | GET    | `/api/payments/status`                 | 🔒 ADMIN |
 | Payments | GET    | `/api/payments/:id`                    | 🔒   |
+| Payments | POST   | `/api/payments/:id/status`             | 🔒 ADMIN |
 | Checkout | POST   | `/api/checkout`                        | 🔒   |
 | Checkout | POST   | `/api/checkout/webhook`                | —    |
 | Refunds  | POST   | `/api/refund`                          | 🔒 ADMIN |
@@ -1285,7 +1287,9 @@ front end generating duplicate orders.
   seller/admin (see `POST /api/orders/:id/status`).
 - **`paymentStatus`** — the money lifecycle, **rolled up from the order's
   payments**: `unpaid` → `partially_paid` → `paid`, plus `refunded` /
-  `partially_refunded` once money is returned, and `cancelled`.
+  `partially_refunded` once money is returned, and `cancelled`. It is never set
+  on the order directly — it follows the payments, whose own status an admin can
+  force via `POST /api/payments/:id/status`.
 
 A user may have only **one open order** at a time — an order still awaiting
 payment (`paymentStatus` `unpaid` / `partially_paid`) that has not been
@@ -1398,8 +1402,13 @@ curl http://localhost:3000/api/orders/status -H "Authorization: Bearer <adminTok
 
 **Emergency override** — force an order's **fulfilment** status (`orderStatus`)
 to a given value, bypassing the normal lifecycle. Admin only; works on **any**
-order (not scoped to an owner). The money axis (`paymentStatus`) is not touched
-here — it is a rollup of the order's payments.
+order (not scoped to an owner).
+
+This endpoint accepts **fulfilment statuses only**. The money axis
+(`paymentStatus`) is not settable here — it is a rollup of the order's payments,
+so it is changed per payment via
+[`POST /api/payments/:id/status`](#post-apipaymentsidstatus--admin). A payment
+status in the body is rejected with `422`.
 
 **Body (required):** `status` — one of the values from `GET /api/orders/status`.
 
@@ -1418,12 +1427,12 @@ curl -X POST http://localhost:3000/api/orders/5/status \
 
 ## Payments 🔒
 
-Payments are a **read-only** resource scoped to the caller: each payment is
-visible only through the order it belongs to, and only if that order is the
-caller's (otherwise `404`, exactly like orders). Payments are **created and
-settled by the checkout and refund flows**, never over these routes. An order has
-one payment per checkout attempt (the model supports several per order); the
-order's `paymentStatus` is a rollup of them.
+Payments are **read-only for the caller**: each payment is visible only through
+the order it belongs to, and only if that order is the caller's (otherwise `404`,
+exactly like orders). Payments are **created and settled by the checkout and
+refund flows**, never over these routes — the one exception is the admin status
+override below. An order has one payment per checkout attempt (the model supports
+several per order); the order's `paymentStatus` is a rollup of them.
 
 The **payment object**:
 
@@ -1479,6 +1488,64 @@ curl http://localhost:3000/api/payments/11 -H "Authorization: Bearer <token>"
 
 **200** → success envelope wrapping a single payment object.
 **404** — not found (or not yours)
+
+---
+
+### GET `/api/payments/status` 🔒 ADMIN
+
+List every possible **payment** status (a payment's `status`). Admin only. These
+are the values accepted by `POST /api/payments/:id/status` — a different set from
+the order fulfilment statuses in `GET /api/orders/status`.
+
+```bash
+curl http://localhost:3000/api/payments/status -H "Authorization: Bearer <adminToken>"
+```
+
+**200**
+
+```json
+{
+  "success": true,
+  "data": {
+    "statuses": ["pending", "paid", "payment_failed", "cancelled", "refunded", "partially_refunded"]
+  }
+}
+```
+
+**401** — missing/invalid token · **403** — not an ADMIN
+
+---
+
+### POST `/api/payments/:id/status` 🔒 ADMIN
+
+**Emergency override** — force a **payment's** status to a given value, bypassing
+the normal lifecycle. Admin only; works on **any** payment (not scoped to an
+owner). This is where the money axis is set: payment status is per payment, so
+there is no equivalent on the orders resource.
+
+The owning order's `paymentStatus` is **recomputed from all of its payments** and
+saved, so the order always reflects its payments. The order's fulfilment status
+(`orderStatus`) is never changed here — use
+[`POST /api/orders/:id/status`](#post-apiordersidstatus--admin) for that.
+
+Only the payment's `status` is written. Refund bookkeeping (`amountRefunded`,
+`refundedOn`, `refundStatus`) belongs to the refund flow, so forcing a payment to
+`refunded` marks the row without inventing a refund amount — and the order rollup,
+which reads that amount, still counts the payment as captured. To actually refund
+money, use [`POST /api/refund`](#post-apirefund--admin).
+
+**Body (required):** `status` — one of the values from `GET /api/payments/status`.
+
+```bash
+curl -X POST http://localhost:3000/api/payments/11/status \
+  -H "Authorization: Bearer <adminToken>" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "paid" }'
+```
+
+**200** → success envelope wrapping the updated payment object.
+**401** — missing/invalid token · **403** — not an ADMIN
+**404** — no such payment · **422** — missing or unknown `status`
 
 ---
 
@@ -1662,9 +1729,11 @@ Only a payment with a `pending` refund can be settled. Re-delivery is idempotent
 - Store `accessToken` and `refreshToken` from login; send `Authorization: Bearer <accessToken>`
   on 🔒 endpoints; call `POST /api/auth/refresh` when the access token expires.
 - **🔒 ADMIN** endpoints (product and category create/update/delete, starting a refund
-  via `POST /api/refund`, and the order-status override `GET /api/orders/status` /
-  `POST /api/orders/:id/status`) require the token's user to have the `ADMIN` role —
-  non-admins get **403**, missing/invalid tokens get **401**.
+  via `POST /api/refund`, the order-status override `GET /api/orders/status` /
+  `POST /api/orders/:id/status`, and the payment-status override
+  `GET /api/payments/status` / `POST /api/payments/:id/status`) require the token's
+  user to have the `ADMIN` role — non-admins get **403**, missing/invalid tokens
+  get **401**.
 - The cart and wishlist are per-user singletons under `/api/users/:id/…`; `:id` must be the
   logged-in user's own id. Place an order with `POST /api/checkout` (no body) — never post order
   data directly; `/api/orders` is read-only.

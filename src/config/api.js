@@ -130,12 +130,17 @@ const API = {
     payments:      (id) => `${BASE}/api/orders/${id}/payments`,
   },
 
-  // Payments — read-only, scoped to the caller through the owning order. There
-  // is **no list-all endpoint**: a payment is reachable either through its order
+  // Payments — scoped to the caller through the owning order. There is **no
+  // list-all endpoint**: a payment is reachable either through its order
   // (`orders.payments`) or directly by its own numeric id. Payments are created
   // and settled by the checkout/refund flows, never over these routes.
   payments: {
     byId: (id) => `${BASE}/api/payments/${id}`,
+    // ADMIN — list every possible payment status (GET), and force a payment to
+    // one of them (POST { status }). This is where the money axis is set: the
+    // order's `paymentStatus` is recomputed from its payments afterwards.
+    statusOptions: `${BASE}/api/payments/status`,
+    setStatus:     (id) => `${BASE}/api/payments/${id}/status`,
   },
 
   // Checkout — registers an order from the caller's cart and starts a Stripe

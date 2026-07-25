@@ -25,6 +25,11 @@
 // unavailable (that endpoint lists `orderStatus` values only).
 export const ORDER_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled']
 
+// A *payment's* own lifecycle — a different set from the order statuses above.
+// Fallback for GET /api/payments/status, and the values POST
+// /api/payments/:id/status accepts.
+export const PAYMENT_STATUSES = ['pending', 'paid', 'payment_failed', 'cancelled', 'refunded', 'partially_refunded']
+
 // Legacy single-axis statuses → the axis each one belonged to. Only needed for
 // the demo/fallback data and any order stored before the split.
 const LEGACY_TO_ORDER_STATUS = {

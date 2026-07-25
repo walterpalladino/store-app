@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { okEnvelope, mockJsonResponse } from './helpers.jsx'
-import { fetchOrderPayments, fetchPayment, fetchPayments } from '../services/paymentsService'
+import {
+  fetchOrderPayments, fetchPayment, fetchPayments,
+  fetchPaymentStatusOptions, changePaymentStatus,
+} from '../services/paymentsService'
 import API from '../config/api'
 
 // Money is integer cents on the wire; the service converts at the boundary.
@@ -46,6 +49,40 @@ describe('paymentsService.fetchPayment', () => {
 
     expect(fetcher).toHaveBeenCalledWith(API.payments.byId(11))
     expect(p).toMatchObject({ id: 11, amount: 24 })
+  })
+})
+
+describe('paymentsService.fetchPaymentStatusOptions', () => {
+  it('reads the admin status list', async () => {
+    const statuses = ['pending', 'paid', 'payment_failed', 'cancelled', 'refunded', 'partially_refunded']
+    const merchantFetch = vi.fn().mockResolvedValue(mockJsonResponse(okEnvelope({ statuses })))
+
+    expect(await fetchPaymentStatusOptions(merchantFetch)).toEqual(statuses)
+    expect(merchantFetch).toHaveBeenCalledWith(API.payments.statusOptions)
+  })
+
+  it('degrades to an empty list instead of throwing (403 non-admin)', async () => {
+    const merchantFetch = vi.fn().mockResolvedValue(mockJsonResponse({ message: 'Forbidden' }, 403))
+    await expect(fetchPaymentStatusOptions(merchantFetch)).resolves.toEqual([])
+  })
+})
+
+describe('paymentsService.changePaymentStatus', () => {
+  it('POSTs the status and returns the updated payment in decimal units', async () => {
+    const merchantFetch = vi.fn().mockResolvedValue(
+      mockJsonResponse(okEnvelope(payment({ status: 'cancelled' }))),
+    )
+
+    const updated = await changePaymentStatus(merchantFetch, 11, 'cancelled')
+
+    expect(merchantFetch).toHaveBeenCalledWith(API.payments.setStatus(11), expect.objectContaining({ method: 'POST' }))
+    expect(JSON.parse(merchantFetch.mock.calls[0][1].body)).toEqual({ status: 'cancelled' })
+    expect(updated).toMatchObject({ id: 11, status: 'cancelled', amount: 24 })
+  })
+
+  it('throws the server message on an unknown status (422)', async () => {
+    const merchantFetch = vi.fn().mockResolvedValue(mockJsonResponse({ message: 'Unknown status' }, 422))
+    await expect(changePaymentStatus(merchantFetch, 11, 'nope')).rejects.toThrow('Unknown status')
   })
 })
 

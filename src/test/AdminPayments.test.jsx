@@ -28,11 +28,20 @@ const PAYMENT = {
   updatedAt: '2026-07-05T10:00:00.000Z',
 }
 
-function setup({ orders = ORDERS, payments = [PAYMENT], one } = {}) {
-  const merchantFetch = vi.fn((url) => {
+// The payment lifecycle — a different set from the order fulfilment statuses.
+const PAYMENT_STATUS_OPTIONS = ['pending', 'paid', 'payment_failed', 'cancelled', 'refunded', 'partially_refunded']
+
+function setup({ orders = ORDERS, payments = [PAYMENT], one, statuses, setStatus } = {}) {
+  const merchantFetch = vi.fn((url, opts) => {
     const u = String(url)
     if (/\/orders\/\d+\/payments$/.test(u)) {
       return Promise.resolve(mockJsonResponse(okEnvelope({ payments })))
+    }
+    if (/\/payments\/status$/.test(u)) {
+      return Promise.resolve(statuses ? statuses() : mockJsonResponse(okEnvelope({ statuses: PAYMENT_STATUS_OPTIONS })))
+    }
+    if (/\/payments\/\d+\/status$/.test(u)) {
+      return Promise.resolve(setStatus ? setStatus(url, opts) : mockJsonResponse(okEnvelope({ ...PAYMENT, status: 'cancelled' })))
     }
     if (/\/payments\/\d+$/.test(u)) {
       return Promise.resolve(one ? one() : mockJsonResponse(okEnvelope(PAYMENT)))
@@ -135,5 +144,91 @@ describe('AdminPayments — detail', () => {
       expect(screen.getByLabelText(/filter payments by order id/i))
         .toHaveValue('b562e3ae-792f-11f1-9844-97b9d913d5f0'),
     )
+  })
+})
+
+describe('AdminPayments — status override', () => {
+  it('confirms before calling the endpoint, then POSTs the chosen status', async () => {
+    const { merchantFetch } = setup()
+
+    renderWithProviders(<AdminPayments />)
+
+    // Open the per-row status picker and pick a new payment status.
+    fireEvent.click(await screen.findByRole('button', { name: /change status of payment #11/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelled' }))
+
+    // A confirmation dialog appears — and nothing has been sent yet.
+    expect(await screen.findByText(/Change payment status\?/i)).toBeInTheDocument()
+    expect(merchantFetch.mock.calls.some(([u]) => /\/payments\/11\/status$/.test(String(u)))).toBe(false)
+
+    // Confirm → POSTs through the authenticated admin fetcher.
+    fireEvent.click(screen.getByRole('button', { name: /confirm change/i }))
+    await waitFor(() =>
+      expect(merchantFetch.mock.calls.some(([u]) => /\/payments\/11\/status$/.test(String(u)))).toBe(true),
+    )
+    const call = merchantFetch.mock.calls.find(([u]) => /\/payments\/11\/status$/.test(String(u)))
+    expect(call[1].method).toBe('POST')
+    expect(JSON.parse(call[1].body)).toEqual({ status: 'cancelled' })
+
+    // Outcome is reported to the admin.
+    expect(await screen.findByText(/Payment #11 set to/i)).toBeInTheDocument()
+  })
+
+  it('offers the payment lifecycle, not the order fulfilment one', async () => {
+    setup()
+
+    renderWithProviders(<AdminPayments />)
+    fireEvent.click(await screen.findByRole('button', { name: /change status of payment #11/i }))
+
+    expect(await screen.findByRole('menuitem', { name: 'Payment Failed' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Shipped' })).not.toBeInTheDocument()
+    // The payment's current status cannot be re-picked.
+    expect(screen.getByRole('menuitem', { name: 'Paid' })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('does not call the endpoint when the confirmation is cancelled', async () => {
+    const { merchantFetch } = setup()
+
+    renderWithProviders(<AdminPayments />)
+    fireEvent.click(await screen.findByRole('button', { name: /change status of payment #11/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelled' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^cancel$/i }))
+
+    await waitFor(() => expect(screen.queryByText(/Change payment status\?/i)).not.toBeInTheDocument())
+    expect(merchantFetch.mock.calls.some(([u]) => /\/payments\/11\/status$/.test(String(u)))).toBe(false)
+  })
+
+  it('surfaces a server error without changing the row', async () => {
+    setup({ setStatus: () => mockJsonResponse({ message: 'Unknown status' }, 422) })
+
+    renderWithProviders(<AdminPayments />)
+    fireEvent.click(await screen.findByRole('button', { name: /change status of payment #11/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelled' }))
+    fireEvent.click(await screen.findByRole('button', { name: /confirm change/i }))
+
+    expect(await screen.findByText(/Unknown status/i)).toBeInTheDocument()
+    // The row's status chip is untouched (the confirmation stays open to retry).
+    expect(screen.getAllByText('Paid').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/set to/i)).not.toBeInTheDocument()
+  })
+
+  it('can also be changed from the payment detail view', async () => {
+    const { merchantFetch } = setup()
+
+    renderWithProviders(<AdminPayments />)
+    fireEvent.click(await screen.findByText('#11'))
+    await screen.findByRole('button', { name: /back to payments/i })
+
+    fireEvent.click(screen.getByRole('button', { name: /change status of payment #11/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelled' }))
+    fireEvent.click(await screen.findByRole('button', { name: /confirm change/i }))
+
+    await waitFor(() =>
+      expect(merchantFetch.mock.calls.some(([u]) => /\/payments\/11\/status$/.test(String(u)))).toBe(true),
+    )
+    // The open payment reflects the new status without a re-fetch — the header
+    // chip and the Status field both read it back.
+    expect(await screen.findByText(/Payment #11 set to/i)).toBeInTheDocument()
+    expect(screen.getAllByText('Cancelled').length).toBeGreaterThanOrEqual(2)
   })
 })

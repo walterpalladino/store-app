@@ -4,15 +4,20 @@ import {
   Box, Typography, Divider, Chip, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Alert, Button, Fade,
   Tooltip, IconButton, TextField, InputAdornment, Skeleton,
+  Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogContentText,
+  DialogActions, Snackbar, CircularProgress,
 } from '@mui/material'
 import {
   AccountBalanceWalletOutlined, RefreshOutlined, SearchOutlined,
   ClearOutlined, PaidOutlined, CurrencyExchangeOutlined,
   HourglassEmptyOutlined, ArrowBackRounded, ReceiptLongOutlined,
+  EditOutlined, WarningAmberOutlined,
 } from '@mui/icons-material'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
-import { fetchPayments, fetchPayment } from '../../services/paymentsService'
-import { prettyStatus, statusStyle, shortOrderId } from '../../utils/orders'
+import {
+  fetchPayments, fetchPayment, fetchPaymentStatusOptions, changePaymentStatus,
+} from '../../services/paymentsService'
+import { prettyStatus, statusStyle, shortOrderId, PAYMENT_STATUSES } from '../../utils/orders'
 
 // ---------------------------------------------------------------------------
 // AdminPayments — the Payments resource, split out of the order object.
@@ -22,6 +27,10 @@ import { prettyStatus, statusStyle, shortOrderId } from '../../utils/orders'
 // `partially_refunded`) and the settlement fields that used to hang off the
 // order (`paidOn`, `amountRefunded`, `refundStatus`, `refundedOn`). The order
 // only keeps a rolled-up `paymentStatus`.
+//
+// The money axis is set **here**, per payment (POST /api/payments/:id/status) —
+// there is no equivalent on the orders resource, whose `paymentStatus` the
+// backend recomputes from its payments after every override.
 //
 // The API has **no list-all payments route** — the list below is composed from
 // the visible orders, one payments request each (see paymentsService). The
@@ -44,8 +53,8 @@ const fmtDate = (iso) => (iso
 
 // The order a payment belongs to, as shown in the list: `orderId` on a payment
 // is the order's public UUID (the list also carries an `order` summary).
-const paymentOrderLabel = (p) =>
-  shortOrderId({ orderId: p.orderId ?? p.order?.orderId, id: p.order?.id })
+const orderUuidOf = (p) => p?.orderId ?? p?.order?.orderId
+const paymentOrderLabel = (p) => shortOrderId({ orderId: orderUuidOf(p), id: p?.order?.id })
 
 function StatCard({ icon, label, value, sub, color = 'secondary.dark' }) {
   return (
@@ -61,28 +70,12 @@ function StatCard({ icon, label, value, sub, color = 'secondary.dark' }) {
 }
 
 // ---------------------------------------------------------------------------
-// Payment detail — GET /api/payments/:id, the authoritative single payment.
+// Payment detail — presentational; the parent owns the fetch so a status
+// override updates the list and the detail from one place.
 // ---------------------------------------------------------------------------
-function PaymentDetail({ paymentId, summary, onBack, onFilterOrder }) {
-  const { merchantFetch } = useMerchantAuth()
-  const [payment, setPayment] = useState(summary ?? null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState('')
-
-  const load = useCallback(async () => {
-    setLoading(true); setError('')
-    try {
-      setPayment(await fetchPayment(merchantFetch, paymentId))
-    } catch (err) {
-      // Fall back to the row we already have so the view still says something.
-      setError(err.message || 'Could not load this payment.')
-    } finally { setLoading(false) }
-  }, [merchantFetch, paymentId])
-
-  useEffect(() => { load() }, [load])
-
+function PaymentDetail({ payment, loading, error, changing, onBack, onReload, onFilterOrder, onChangeStatus }) {
   const st = statusStyle(payment?.status)
-  const orderUuid = payment?.orderId ?? summary?.orderId ?? summary?.order?.orderId
+  const orderUuid = orderUuidOf(payment)
 
   const fields = payment ? [
     { label: 'Payment id',    value: `#${payment.id}` },
@@ -110,8 +103,8 @@ function PaymentDetail({ paymentId, summary, onBack, onFilterOrder }) {
         </Button>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 3, fontSize: '0.78rem' }} onClose={() => setError('')}
-            action={<Button size="small" color="inherit" onClick={load} sx={{ fontSize: '0.68rem' }}>Retry</Button>}>
+          <Alert severity="error" sx={{ mb: 3, fontSize: '0.78rem' }}
+            action={<Button size="small" color="inherit" onClick={onReload} sx={{ fontSize: '0.68rem' }}>Retry</Button>}>
             {error}
           </Alert>
         )}
@@ -138,7 +131,24 @@ function PaymentDetail({ paymentId, summary, onBack, onFilterOrder }) {
                   )}
                 </Box>
                 <Box sx={{ textAlign: 'right' }}>
-                  <Chip label={prettyStatus(payment.status)} size="small" sx={{ height: 22, fontSize: '0.62rem', letterSpacing: '0.08em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1, mb: 1 }} />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end', mb: 1 }}>
+                    <Chip label={prettyStatus(payment.status)} size="small" sx={{ height: 22, fontSize: '0.62rem', letterSpacing: '0.08em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                    <Tooltip title="Change payment status" arrow>
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={changing}
+                          onClick={(e) => onChangeStatus(e, payment)}
+                          aria-label={`Change status of payment #${payment.id}`}
+                          sx={{ color: 'rgba(245,240,232,0.6)', '&:hover': { color: '#c8a96e' } }}
+                        >
+                          {changing
+                            ? <CircularProgress size={13} sx={{ color: 'inherit' }} />
+                            : <EditOutlined sx={{ fontSize: 15 }} />}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
                   <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1.8rem', fontWeight: 500, color: '#f5f0e8', lineHeight: 1 }}>
                     {fmt(payment.amount, payment.currency)}
                   </Typography>
@@ -185,7 +195,7 @@ function PaymentDetail({ paymentId, summary, onBack, onFilterOrder }) {
 }
 
 // ---------------------------------------------------------------------------
-// AdminPayments — list + detail
+// AdminPayments — list + detail + admin status override
 // ---------------------------------------------------------------------------
 export default function AdminPayments() {
   const { merchantFetch } = useMerchantAuth()
@@ -197,7 +207,21 @@ export default function AdminPayments() {
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [filter,    setFilter]    = useState(urlOrderId)
-  const [selected,  setSelected]  = useState(null)   // the payment row being viewed
+
+  // Detail state lives here so a status override updates the row and the open
+  // payment from one place.
+  const [detail,        setDetail]        = useState(null)   // full payment, or the row while it loads
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError,   setDetailError]   = useState('')
+
+  // Admin status override
+  const [statusOptions, setStatusOptions] = useState(PAYMENT_STATUSES)
+  const [statusMenu,    setStatusMenu]    = useState({ anchorEl: null, payment: null })
+  const [pendingStatus, setPendingStatus] = useState(null)   // { payment, next } awaiting confirmation
+  const [changingId,    setChangingId]    = useState(null)   // payment id with a change in flight
+  const [toast,         setToast]         = useState({ open: false, message: '', severity: 'success' })
+
+  const closeToast = () => setToast((t) => ({ ...t, open: false }))
 
   // Arriving from Sales ("view payments for this order") carries ?orderId=… —
   // adopt it as the filter. Deep-linking here is the same as opening Payments
@@ -222,6 +246,16 @@ export default function AdminPayments() {
     return () => clearTimeout(t)
   }, [filter, load])
 
+  // Load the valid payment statuses once (admin-only endpoint). Falls back to
+  // the known lifecycle if it's unavailable, so the picker still works.
+  useEffect(() => {
+    let alive = true
+    fetchPaymentStatusOptions(merchantFetch)
+      .then((opts) => { if (alive && opts.length) setStatusOptions(opts) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [merchantFetch])
+
   // Keep the filter in the URL so the view is shareable and survives a reload.
   const applyFilter = useCallback((value) => {
     setFilter(value)
@@ -229,6 +263,51 @@ export default function AdminPayments() {
     if (value.trim()) next.orderId = value.trim()
     setSearchParams(next, { replace: true })
   }, [setSearchParams])
+
+  // ── Detail ──────────────────────────────────────────────────────────────────
+  // Show the row we already have, then replace it with GET /api/payments/:id
+  // (the authoritative object). The row's `order` summary is kept by merging.
+  const openPayment = useCallback(async (row) => {
+    setDetail(row); setDetailError(''); setDetailLoading(true)
+    try {
+      const full = await fetchPayment(merchantFetch, row.id)
+      setDetail((prev) => ({ ...prev, ...full }))
+    } catch (err) {
+      setDetailError(err.message || 'Could not load this payment.')
+    } finally { setDetailLoading(false) }
+  }, [merchantFetch])
+
+  // ── Admin status override ───────────────────────────────────────────────────
+  // Confirmed in a dialog before the endpoint is called: forcing a status
+  // bypasses the normal lifecycle, so it must be a deliberate action.
+  const openStatusMenu = (e, payment) => setStatusMenu({ anchorEl: e.currentTarget, payment })
+  const closeStatusMenu = () => setStatusMenu({ anchorEl: null, payment: null })
+
+  const pickStatus = (next) => {
+    const { payment } = statusMenu
+    closeStatusMenu()
+    if (payment && next !== String(payment.status ?? '').toLowerCase()) setPendingStatus({ payment, next })
+  }
+
+  const confirmStatusChange = useCallback(async () => {
+    if (!pendingStatus) return
+    const { payment, next } = pendingStatus
+    setChangingId(payment.id)
+    try {
+      const updated = await changePaymentStatus(merchantFetch, payment.id, next)
+      setPayments((prev) => prev.map((p) => (p.id === payment.id ? { ...p, ...updated } : p)))
+      setDetail((prev) => (prev && prev.id === payment.id ? { ...prev, ...updated } : prev))
+      setToast({ open: true, severity: 'success', message: `Payment #${payment.id} set to “${prettyStatus(updated?.status ?? next)}”.` })
+      setPendingStatus(null)
+      // The owning order's `paymentStatus` was recomputed server-side, so the
+      // order rollups in the list are stale — re-read them.
+      load(filter)
+    } catch (err) {
+      setToast({ open: true, severity: 'error', message: err.message || 'Could not change the payment status.' })
+    } finally {
+      setChangingId(null)
+    }
+  }, [pendingStatus, merchantFetch, load, filter])
 
   const stats = useMemo(() => {
     const captured = payments
@@ -239,18 +318,7 @@ export default function AdminPayments() {
     return { captured, refunded, pending }
   }, [payments])
 
-  if (selected) {
-    return (
-      <PaymentDetail
-        paymentId={selected.id}
-        summary={selected}
-        onBack={() => setSelected(null)}
-        onFilterOrder={(orderId) => { setSelected(null); applyFilter(orderId) }}
-      />
-    )
-  }
-
-  return (
+  const listView = (
     <Fade in>
       <Box>
         {/* Title */}
@@ -366,7 +434,7 @@ export default function AdminPayments() {
                           <TableRow
                             key={p.id}
                             hover
-                            onClick={() => setSelected(p)}
+                            onClick={() => openPayment(p)}
                             sx={{ cursor: 'pointer', bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)', '&:last-child td': { border: 0 }, '&:hover': { bgcolor: 'rgba(200,169,110,0.03)' }, transition: 'background 0.15s' }}
                           >
                             <TableCell sx={{ py: 1.75, px: 2 }}>
@@ -376,14 +444,33 @@ export default function AdminPayments() {
                               </Box>
                             </TableCell>
                             <TableCell sx={{ py: 1.75, px: 2 }}>
-                              <Tooltip title={p.orderId ?? p.order?.orderId ?? ''} arrow disableHoverListener={!(p.orderId ?? p.order?.orderId)}>
+                              <Tooltip title={orderUuidOf(p) ?? ''} arrow disableHoverListener={!orderUuidOf(p)}>
                                 <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'text.secondary' }}>
                                   {paymentOrderLabel(p)}
                                 </Typography>
                               </Tooltip>
                             </TableCell>
+                            {/* Status — with the admin override control. The
+                                button stops the click from opening the row. */}
                             <TableCell sx={{ py: 1.75, px: 2 }}>
-                              <Chip label={prettyStatus(p.status)} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Chip label={prettyStatus(p.status)} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                                <Tooltip title="Change payment status" arrow>
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      disabled={changingId === p.id}
+                                      onClick={(e) => { e.stopPropagation(); openStatusMenu(e, p) }}
+                                      aria-label={`Change status of payment #${p.id}`}
+                                      sx={{ color: 'text.secondary', '&:hover': { color: 'secondary.dark' } }}
+                                    >
+                                      {changingId === p.id
+                                        ? <CircularProgress size={13} sx={{ color: 'inherit' }} />
+                                        : <EditOutlined sx={{ fontSize: 14 }} />}
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              </Box>
                             </TableCell>
                             <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
                               <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1rem', fontWeight: 500 }}>{fmt(p.amount, p.currency)}</Typography>
@@ -406,5 +493,83 @@ export default function AdminPayments() {
         </Box>
       </Box>
     </Fade>
+  )
+
+  return (
+    <>
+      {detail ? (
+        <PaymentDetail
+          payment={detail}
+          loading={detailLoading}
+          error={detailError}
+          changing={changingId === detail.id}
+          onBack={() => { setDetail(null); setDetailError('') }}
+          onReload={() => openPayment(detail)}
+          onFilterOrder={(orderId) => { setDetail(null); applyFilter(orderId) }}
+          onChangeStatus={openStatusMenu}
+        />
+      ) : listView}
+
+      {/* Status picker — the payment lifecycle; the current value is disabled */}
+      <Menu
+        anchorEl={statusMenu.anchorEl}
+        open={Boolean(statusMenu.anchorEl)}
+        onClose={closeStatusMenu}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        {statusOptions.map((s) => {
+          const current = s === String(statusMenu.payment?.status ?? '').toLowerCase()
+          return (
+            <MenuItem key={s} selected={current} disabled={current} onClick={() => pickStatus(s)} sx={{ fontSize: '0.8rem' }}>
+              {prettyStatus(s)}
+            </MenuItem>
+          )
+        })}
+      </Menu>
+
+      {/* Confirmation — required before the override endpoint is called */}
+      <Dialog open={Boolean(pendingStatus)} onClose={() => changingId ? null : setPendingStatus(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontFamily: '"Cormorant Garamond", serif', fontSize: '1.3rem' }}>
+          <WarningAmberOutlined sx={{ color: '#c8a96e', fontSize: 22 }} />
+          Change payment status?
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ fontSize: '0.85rem' }}>
+            {pendingStatus && (
+              <>
+                This forces payment <strong>#{pendingStatus.payment.id}</strong> from{' '}
+                <strong>{prettyStatus(pendingStatus.payment.status)}</strong> to{' '}
+                <strong>{prettyStatus(pendingStatus.next)}</strong>, bypassing the normal payment
+                lifecycle. The order&rsquo;s payment status is recomputed from its payments;
+                its fulfilment status is unaffected. No money moves — to refund, use the
+                Refund action in Sales. This cannot be undone automatically.
+              </>
+            )}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setPendingStatus(null)} disabled={Boolean(changingId)}
+            sx={{ textTransform: 'none', color: 'text.secondary' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained" onClick={confirmStatusChange} disabled={Boolean(changingId)}
+            startIcon={changingId ? <CircularProgress size={14} sx={{ color: 'inherit' }} /> : null}
+            sx={{ textTransform: 'none' }}
+          >
+            {changingId ? 'Applying…' : 'Confirm change'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Status-change outcome + error feedback */}
+      <Snackbar open={toast.open} autoHideDuration={4000} onClose={closeToast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast.severity} onClose={closeToast}
+          sx={{ fontSize: '0.82rem', boxShadow: '0 4px 20px rgba(26,26,26,0.15)' }}>
+          {toast.message}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }

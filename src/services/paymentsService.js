@@ -10,9 +10,14 @@ import { paymentFromCents, orderFromCents } from '../utils/money'
 // payment, and the order only carries a rolled-up `paymentStatus`. See the
 // "Payments" section of API_CONTRACT.md.
 //
-// Two endpoints exist, both scoped to the caller through the owning order:
+// Reads are scoped to the caller through the owning order:
 //   GET /api/orders/:id/payments   → the payments of one order (numeric id)
 //   GET /api/payments/:id          → one payment by its own numeric id
+//
+// Two admin-only routes force the money axis, which has no equivalent on the
+// orders resource (an order's `paymentStatus` is a rollup, never set directly):
+//   GET  /api/payments/status      → the valid payment statuses
+//   POST /api/payments/:id/status  → force one payment to one of them
 //
 // **There is no list-all endpoint.** `fetchPayments` therefore composes the
 // admin-wide list client-side: it resolves a set of orders (all of them, or the
@@ -73,6 +78,50 @@ export async function fetchPayment(fetcher, id) {
   const res = await fetcher(API.payments.byId(id))
   if (!res.ok) throw new Error(await readError(res))
   return paymentFromCents(await readData(res))
+}
+
+/**
+ * GET /api/payments/status — the possible **payment** statuses (a different set
+ * from the order fulfilment statuses). Requires an ADMIN fetcher. Returns `[]`
+ * when the request fails so the caller can degrade gracefully instead of
+ * throwing (utils/orders exports PAYMENT_STATUSES as the fallback list).
+ *
+ * @param {(url: string, opts?: object) => Promise<Response>} merchantFetch
+ * @returns {Promise<string[]>}
+ */
+export async function fetchPaymentStatusOptions(merchantFetch) {
+  const res = await merchantFetch(API.payments.statusOptions)
+  if (!res.ok) return []
+  const { statuses } = await readData(res)   // { statuses: [...] }
+  return Array.isArray(statuses) ? statuses : []
+}
+
+/**
+ * POST /api/payments/:id/status — force a payment's `status`, bypassing the
+ * normal lifecycle. Requires ADMIN; works on any payment, not just the caller's.
+ *
+ * Only the payment's `status` is written: refund bookkeeping (`amountRefunded`,
+ * `refundedOn`, `refundStatus`) belongs to the refund flow, so forcing a payment
+ * to `refunded` here marks the row without moving money — use `startRefund` for
+ * that. The owning order's `paymentStatus` is recomputed from all of its
+ * payments server-side, so **the order rollup shown elsewhere goes stale** and
+ * should be re-read after a successful call.
+ *
+ * @param {(url: string, opts?: object) => Promise<Response>} merchantFetch
+ * @param {number|string} id — the payment's numeric id
+ * @param {string} status — one of the values from fetchPaymentStatusOptions
+ * @returns {Promise<object>} the updated payment (money fields in decimal units)
+ *
+ * Throws the server message on failure (403 non-admin, 404 no such payment,
+ * 422 missing/unknown status).
+ */
+export async function changePaymentStatus(merchantFetch, id, status) {
+  const res = await merchantFetch(API.payments.setStatus(id), {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  })
+  if (!res.ok) throw new Error(await readError(res))
+  return paymentFromCents(await readData(res))   // updated payment object
 }
 
 /**
