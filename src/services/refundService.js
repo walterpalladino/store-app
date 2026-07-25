@@ -7,9 +7,11 @@ import { orderFromCents, centsToUnits } from '../utils/money'
 //
 // Refunding is a standalone operation, separate from the read-only orders
 // resource: POST /api/refund { orderId } hands off to Stripe and moves the
-// order's `refundStatus` to "pending". The refund then settles asynchronously
-// via a server-to-server webhook (`amountRefunded` / `refundedOn` land later),
-// so the response we get back reports the *pending* state — not the final one.
+// order's settled **payment** to `refundStatus: "pending"`. The refund then
+// settles asynchronously via a server-to-server webhook (`amountRefunded` /
+// `refundedOn` land on the payment later, and the order's `paymentStatus` rolls
+// up), so the response we get back reports the *pending* state — not the final
+// one. The order's fulfilment `orderStatus` is never changed by a refund.
 // ---------------------------------------------------------------------------
 
 /**
@@ -22,7 +24,8 @@ import { orderFromCents, centsToUnits } from '../utils/money'
  *   converted from integer cents to decimal currency units.
  *
  * Throws the server message on failure (403 non-admin, 404 no such order,
- * 409 the order is not `paid` / a refund already exists).
+ * 409 the order's `paymentStatus` is not `paid`, it has no settled payment, or
+ * a refund already exists).
  */
 export async function startRefund(merchantFetch, orderId) {
   const res = await merchantFetch(API.refund, {

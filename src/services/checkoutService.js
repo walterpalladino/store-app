@@ -1,53 +1,63 @@
 import API from '../config/api'
 import { readError, readData } from './httpEnvelope'
 import { orderFromCents, checkoutFromCents } from '../utils/money'
+import { isOpenOrder } from '../utils/orders'
 
 // ---------------------------------------------------------------------------
 // checkoutService — places an order via POST /api/checkout.
 //
 // Checkout is a single backend operation: it registers the order from the
-// caller's cart, starts a Stripe **hosted** Checkout Session, moves the order to
-// "Payment Pending", and clears the cart. Orders are never created from the
-// front end — this is what prevents duplicate orders.
+// caller's cart as `pending` / `unpaid`, starts a Stripe **hosted** Checkout
+// Session, records a `pending` payment for it, and clears the cart. Orders are
+// never created from the front end — this is what prevents duplicate orders.
 //
 // Hosted (not embedded) flow: the front end POSTs the success/cancel callback
 // URLs, then redirects the browser to `checkout.url` (Stripe's hosted page).
 // Stripe collects payment and redirects back to `successUrl` (with
 // `?session_id=…`) or `cancelUrl`. Payment settles asynchronously via the
 // checkout webhook — so the front end's job ends at the callback; the backend
-// owns the order-status transitions.
+// owns the payment settlement and the order's status rollup.
 // ---------------------------------------------------------------------------
 
-/** True when the order/payment has settled successfully. */
+/**
+ * True when a **status word** reports a settled payment. Kept for the payment
+ * and checkout-session status strings; for an order, prefer `isOrderPaid`,
+ * which reads the order's `paymentStatus` axis.
+ */
 export function isSuccess(status) {
   const s = String(status).toLowerCase()
   return s === 'succeeded' || s === 'complete' || s === 'completed' ||
     s === 'paid' || s === 'fulfilled' || s === 'payment completed'
 }
 
-// A user may have only one order in these states at a time; a new checkout is
-// rejected with 409 while one exists. Compared case-insensitively — the backend
-// reports `pending_payment` (snake_case).
-const OPEN_ORDER_STATUSES = ['new', 'pending', 'draft', 'pending_payment', 'payment pending']
-
 /**
- * GET /api/orders — return the caller's current open order (draft / pending
- * payment), or null. Used to detect an interrupted checkout.
+ * GET /api/orders — return the caller's current open order (still awaiting
+ * payment, not cancelled), or null. Used to detect an interrupted checkout.
+ *
+ * "Open" is now read from the order's money axis (`paymentStatus` `unpaid` /
+ * `partially_paid`) rather than the old single `status` field — see
+ * `isOpenOrder` in utils/orders.
  */
 export async function getOpenOrder(authFetch) {
   const res = await authFetch(API.orders.list)
   if (!res.ok) return null
   const { orders } = await readData(res)
-  const open = (orders ?? []).find((o) => OPEN_ORDER_STATUSES.includes(String(o.status).toLowerCase()))
+  const open = (orders ?? []).find(isOpenOrder)
   return open ? orderFromCents(open) : null   // money fields cents → units
 }
 
 /**
- * GET /api/orders — find the caller's order for a Stripe checkout session,
- * matched on the session id the order stored at checkout. The hosted success
- * callback only carries `?session_id=…` in the URL (page state is lost across
- * the external redirect), so the return page looks the order up this way. Falls
- * back to the newest order when the session can't be matched; null on failure.
+ * GET /api/orders — find the caller's order for a Stripe checkout session. The
+ * hosted success callback only carries `?session_id=…` in the URL (page state is
+ * lost across the external redirect), so the return page has nothing else to go
+ * on.
+ *
+ * **The session id is no longer matchable.** It used to be exposed as
+ * `order.payment.sessionId`; with payments split out of the order it is a
+ * processor identifier that the API never returns — not on the order, not on the
+ * payment. So we fall back to the caller's newest order, which is the one
+ * checkout just created (the list is newest first). The legacy match is kept for
+ * older/demo payloads that still carry the field. Returns null on failure.
  */
 export async function getOrderBySession(authFetch, sessionId) {
   const res = await authFetch(API.orders.list)

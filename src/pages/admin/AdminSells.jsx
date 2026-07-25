@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Box, Typography, Divider, Chip, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Alert, Button, Fade,
@@ -10,24 +11,21 @@ import {
   ReceiptLongOutlined, RefreshOutlined, TrendingUpOutlined,
   ShoppingBagOutlined, LocalOfferOutlined, PaidOutlined,
   CurrencyExchangeOutlined, SearchOutlined, ClearOutlined,
-  EditOutlined, WarningAmberOutlined,
+  EditOutlined, WarningAmberOutlined, AccountBalanceWalletOutlined,
 } from '@mui/icons-material'
 import API from '../../config/api'
 import { unwrap } from '../../utils/apiUtils'
 import { orderFromCents } from '../../utils/money'
-import { normalizeOrder } from '../../utils/orders'
+import {
+  normalizeOrder, orderStatusOf, paymentStatusOf, prettyStatus, statusStyle,
+  shortOrderId, ORDER_STATUSES,
+} from '../../utils/orders'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import { startRefund } from '../../services/refundService'
 import { fetchStatusOptions, changeOrderStatus } from '../../services/orderStatusService'
 
-// The order lifecycle, used as a fallback list when GET /api/orders/status is
-// unavailable (see API_CONTRACT.md → Orders).
-const FALLBACK_STATUSES = ['draft', 'pending_payment', 'paid', 'payment_failed', 'cancelled', 'fulfilled', 'refunded']
-
-// "pending_payment" → "Pending Payment"
-const prettyStatus = (s) => String(s ?? '').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-
-// Reuse the same safe fetch + fallback from PurchaseHistoryPanel
+// Reuse the same safe fetch + fallback from PurchaseHistoryPanel. Orders carry
+// two status axes now (fulfilment + money) — the demo row mirrors that.
 const FALLBACK = [{
   id: 1,
   products: [
@@ -38,37 +36,10 @@ const FALLBACK = [{
   ],
   total: 13037.88, discountedTotal: 11510.81,
   userId: 1, totalProducts: 4, totalQuantity: 12,
-  status: 'Delivered',
-  payment: { cardExpire: '01/30', cardNumber: '3530633803003665', cardType: 'JCB', currency: 'USD' },
+  orderStatus: 'delivered', paymentStatus: 'paid',
 }]
 
-const STATUS_STYLES = {
-  'delivered':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
-  'payment completed': { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
-  'completed':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
-  'paid':              { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
-  'fulfilled':         { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    },
-  'shipped':           { color: '#5a8fa3', bg: 'rgba(90,143,163,0.12)'  },
-  'processing':        { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
-  'pending':           { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
-  'pending_payment':   { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' },
-  'refunded':          { color: '#7a6aa8', bg: 'rgba(122,106,168,0.12)' },
-  'error':             { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
-  'payment could not be processed': { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)' },
-  'payment_failed':    { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
-  'cancelled':         { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'    },
-}
-
-function getStatus(s) {
-  return STATUS_STYLES[(s ?? '').toLowerCase()] ?? { color: '#6b6560', bg: 'rgba(107,101,96,0.1)' }
-}
-
 const fmt = (n) => Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
-
-// Public order id shown to users: the first segment of the UUID (#018f9a2c),
-// falling back to the padded numeric id for demo/legacy orders without one.
-const shortOrderId = (tx) =>
-  tx?.orderId ? `#${String(tx.orderId).split('-')[0]}` : `#${String(tx?.id).padStart(5, '0')}`
 
 // Order line-items may arrive in the lean API shape ({ productId, quantity, price })
 // or the richer legacy/demo shape ({ id, title, discountedTotal, discountPercentage }).
@@ -96,6 +67,7 @@ function StatCard({ icon, label, value, sub, color = 'secondary.dark' }) {
 
 export default function AdminSells() {
   const { merchantFetch } = useMerchantAuth()
+  const [, setSearchParams] = useSearchParams()
   const [transactions,  setTransactions]  = useState([])
   const [thumbnails,    setThumbnails]    = useState({})
   const [loading,       setLoading]       = useState(true)
@@ -104,7 +76,11 @@ export default function AdminSells() {
   const [refundingId,   setRefundingId]   = useState(null)   // order id with a refund in flight
   const [toast,         setToast]         = useState({ open: false, message: '', severity: 'success' })
   const [query,         setQuery]         = useState('')     // public order-id search
-  const [statusOptions, setStatusOptions] = useState(FALLBACK_STATUSES)
+  // A refund's own lifecycle lives on the *payment* now, not the order, and the
+  // order's rollup stays `paid` while one is in flight — so the outcome of a
+  // refund started in this session is remembered here: { [orderId]: status }.
+  const [refundState,   setRefundState]   = useState({})
+  const [statusOptions, setStatusOptions] = useState(ORDER_STATUSES)
   const [statusMenu,    setStatusMenu]    = useState({ anchorEl: null, tx: null })  // per-row status picker
   const [pendingStatus, setPendingStatus] = useState(null)   // { tx, next } awaiting confirmation
   const [changingId,    setChangingId]    = useState(null)   // order id with a status change in flight
@@ -154,17 +130,19 @@ export default function AdminSells() {
     return () => clearTimeout(t)
   }, [query, load])
 
-  // Start a refund for a paid order (admin-only). The refund settles
-  // asynchronously via a webhook, so the response reports a *pending* state —
-  // we merge the returned refund fields into the row and report the outcome.
+  // Start a refund for a paid order (admin-only). The refund acts on the order's
+  // settled payment and completes asynchronously via a webhook, so the response
+  // reports a *pending* state — we refresh the order's money rollup and remember
+  // the refund's own state locally (it lives on the payment, not the order).
   const handleRefund = useCallback(async (tx) => {
     setRefundingId(tx.id)
     try {
       const { order, refund } = await startRefund(merchantFetch, tx.id)
       setTransactions((prev) => prev.map((t) => (t.id === tx.id
-        ? { ...t, status: order?.status ?? t.status, refundStatus: order?.refundStatus ?? 'pending' }
+        ? { ...t, paymentStatus: order?.paymentStatus ?? t.paymentStatus, orderStatus: order?.orderStatus ?? t.orderStatus }
         : t)))
-      const state = refund?.status ?? order?.refundStatus ?? 'pending'
+      const state = refund?.status ?? 'pending'
+      setRefundState((prev) => ({ ...prev, [tx.id]: state }))
       setToast({
         open: true,
         severity: state === 'failed' ? 'error' : 'success',
@@ -177,6 +155,12 @@ export default function AdminSells() {
     }
   }, [merchantFetch])
 
+  // Jump to the Payments panel pre-filtered to this order — the same view as
+  // opening Payments and typing the order id into its filter.
+  const viewPayments = useCallback((tx) => {
+    setSearchParams({ tab: 'payments', orderId: tx.orderId ?? String(tx.id) })
+  }, [setSearchParams])
+
   // Load the valid order statuses once (admin-only endpoint). Falls back to the
   // known lifecycle if it's unavailable, so the picker still works.
   useEffect(() => {
@@ -187,7 +171,9 @@ export default function AdminSells() {
     return () => { alive = false }
   }, [merchantFetch])
 
-  // ── Manual status override (admin) ──────────────────────────────────────────
+  // ── Manual fulfilment-status override (admin) ───────────────────────────────
+  // Only the *fulfilment* axis (`orderStatus`) can be forced; the money axis
+  // (`paymentStatus`) is a rollup of the order's payments and is not settable.
   // The change is confirmed in a dialog before the endpoint is called: forcing a
   // status bypasses the normal lifecycle, so it must be a deliberate action.
   const openStatusMenu = (e, tx) => setStatusMenu({ anchorEl: e.currentTarget, tx })
@@ -197,7 +183,7 @@ export default function AdminSells() {
   const pickStatus = (next) => {
     const tx = statusMenu.tx
     closeStatusMenu()
-    if (tx && next !== tx.status) setPendingStatus({ tx, next })
+    if (tx && next !== orderStatusOf(tx)) setPendingStatus({ tx, next })
   }
 
   const confirmStatusChange = useCallback(async () => {
@@ -206,9 +192,9 @@ export default function AdminSells() {
     setChangingId(tx.id)
     try {
       const updated = await changeOrderStatus(merchantFetch, tx.id, next)
-      const applied = updated?.status ?? next
+      const applied = updated?.orderStatus ?? next
       setTransactions((prev) => prev.map((t) => (t.id === tx.id
-        ? { ...t, status: applied, refundStatus: updated?.refundStatus ?? t.refundStatus }
+        ? { ...t, orderStatus: applied, status: undefined, paymentStatus: updated?.paymentStatus ?? t.paymentStatus }
         : t)))
       setToast({ open: true, severity: 'success', message: `Order ${shortOrderId(tx)} set to “${prettyStatus(applied)}”.` })
       setPendingStatus(null)
@@ -315,7 +301,7 @@ export default function AdminSells() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  {['Order', 'Date', 'Products', 'Units', 'Payment', 'Total', 'Status', 'Actions'].map((h) => (
+                  {['Order', 'Date', 'Products', 'Units', 'Total', 'Fulfilment', 'Payment', 'Actions'].map((h) => (
                     <TableCell key={h} sx={{ py: 1.5, px: 2, fontSize: '0.62rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', fontWeight: 500, bgcolor: 'rgba(26,26,26,0.02)', borderBottom: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' }}>
                       {h}
                     </TableCell>
@@ -334,13 +320,16 @@ export default function AdminSells() {
                       </TableRow>
                     ))
                   : transactions.map((tx, idx) => {
-                      const st = getStatus(tx.status)
-                      const savings = tx.total - tx.discountedTotal
-                      const status       = String(tx.status ?? '').toLowerCase()
-                      const refundStatus = String(tx.refundStatus ?? 'none').toLowerCase()
-                      // A refund can only be started on a paid order that has no
-                      // refund yet (the API returns 409 otherwise).
-                      const canRefund  = status === 'paid' && (refundStatus === 'none' || refundStatus === '')
+                      const savings    = tx.total - tx.discountedTotal
+                      const fulfilment = orderStatusOf(tx)
+                      const money      = paymentStatusOf(tx)
+                      const fSt        = statusStyle(fulfilment)
+                      const mSt        = statusStyle(money)
+                      // A refund can only be started once the order's money axis
+                      // reports `paid` and no refund has been started on it yet
+                      // (the API returns 409 otherwise).
+                      const refundStatus = String(refundState[tx.id] ?? 'none').toLowerCase()
+                      const canRefund   = money === 'paid' && refundStatus === 'none'
                       const isRefunding = refundingId === tx.id
                       return (
                         <TableRow key={tx.id} sx={{ bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)', '&:last-child td': { border: 0 }, '&:hover': { bgcolor: 'rgba(200,169,110,0.03)' }, transition: 'background 0.15s' }}>
@@ -381,12 +370,6 @@ export default function AdminSells() {
                           <TableCell sx={{ py: 1.75, px: 2 }}>
                             <Typography sx={{ fontSize: '0.82rem' }}>{tx.totalQuantity}</Typography>
                           </TableCell>
-                          {/* Payment */}
-                          <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
-                            <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
-                              {tx.payment?.cardType ?? '—'} ···{String(tx.payment?.cardNumber ?? '').slice(-4)}
-                            </Typography>
-                          </TableCell>
                           {/* Total */}
                           <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
                             <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1rem', fontWeight: 500 }}>{fmt(tx.discountedTotal)}</Typography>
@@ -394,11 +377,11 @@ export default function AdminSells() {
                               <Typography sx={{ fontSize: '0.65rem', color: 'success.main' }}>-{fmt(savings)}</Typography>
                             )}
                           </TableCell>
-                          {/* Status — with an admin override control */}
+                          {/* Fulfilment (orderStatus) — with an admin override control */}
                           <TableCell sx={{ py: 1.75, px: 2 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <Chip label={prettyStatus(tx.status) || 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
-                              <Tooltip title={usingFallback ? 'Unavailable in demo mode' : 'Change status'} arrow>
+                              <Chip label={prettyStatus(fulfilment) || 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: fSt.bg, color: fSt.color, fontWeight: 500, borderRadius: 1 }} />
+                              <Tooltip title={usingFallback ? 'Unavailable in demo mode' : 'Change fulfilment status'} arrow>
                                 {/* span keeps the tooltip working while the button is disabled */}
                                 <span>
                                   <IconButton
@@ -416,12 +399,33 @@ export default function AdminSells() {
                               </Tooltip>
                             </Box>
                           </TableCell>
+                          {/* Payment (paymentStatus rollup) — drills into this
+                              order's payments in the Payments panel */}
+                          <TableCell sx={{ py: 1.75, px: 2 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Chip label={prettyStatus(money) || 'Unknown'} size="small" sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.06em', bgcolor: mSt.bg, color: mSt.color, fontWeight: 500, borderRadius: 1 }} />
+                              <Tooltip title={usingFallback ? 'Unavailable in demo mode' : 'View payments for this order'} arrow>
+                                {/* span keeps the tooltip working while the button is disabled */}
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    disabled={usingFallback}
+                                    onClick={() => viewPayments(tx)}
+                                    aria-label={`View payments for order ${shortOrderId(tx)}`}
+                                    sx={{ color: 'text.secondary', '&:hover': { color: 'secondary.dark' } }}
+                                  >
+                                    <AccountBalanceWalletOutlined sx={{ fontSize: 14 }} />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Box>
+                          </TableCell>
                           {/* Actions — refund (admin only, paid orders) */}
                           <TableCell sx={{ py: 1.75, px: 2, whiteSpace: 'nowrap' }}>
                             {refundStatus === 'pending' ? (
                               <Chip label="Refund pending" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(200,169,110,0.12)', color: '#c8a96e', fontWeight: 500, borderRadius: 1 }} />
-                            ) : refundStatus === 'refunded' || status === 'refunded' ? (
-                              <Chip label="Refunded" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(122,106,168,0.12)', color: '#7a6aa8', fontWeight: 500, borderRadius: 1 }} />
+                            ) : refundStatus === 'refunded' || money === 'refunded' || money === 'partially_refunded' ? (
+                              <Chip label={money === 'partially_refunded' ? 'Partly refunded' : 'Refunded'} size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(122,106,168,0.12)', color: '#7a6aa8', fontWeight: 500, borderRadius: 1 }} />
                             ) : refundStatus === 'failed' ? (
                               <Tooltip title="The last refund attempt failed" arrow>
                                 <Chip label="Refund failed" size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: 'rgba(184,92,74,0.1)', color: '#b85c4a', fontWeight: 500, borderRadius: 1 }} />
@@ -524,8 +528,8 @@ export default function AdminSells() {
           {statusOptions.map((s) => (
             <MenuItem
               key={s}
-              selected={s === statusMenu.tx?.status}
-              disabled={s === statusMenu.tx?.status}
+              selected={s === orderStatusOf(statusMenu.tx)}
+              disabled={s === orderStatusOf(statusMenu.tx)}
               onClick={() => pickStatus(s)}
               sx={{ fontSize: '0.8rem' }}
             >
@@ -538,16 +542,17 @@ export default function AdminSells() {
         <Dialog open={Boolean(pendingStatus)} onClose={() => changingId ? null : setPendingStatus(null)} maxWidth="xs" fullWidth>
           <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontFamily: '"Cormorant Garamond", serif', fontSize: '1.3rem' }}>
             <WarningAmberOutlined sx={{ color: '#c8a96e', fontSize: 22 }} />
-            Change order status?
+            Change fulfilment status?
           </DialogTitle>
           <DialogContent>
             <DialogContentText sx={{ fontSize: '0.85rem' }}>
               {pendingStatus && (
                 <>
                   This forces order <strong>{shortOrderId(pendingStatus.tx)}</strong> from{' '}
-                  <strong>{prettyStatus(pendingStatus.tx.status)}</strong> to{' '}
+                  <strong>{prettyStatus(orderStatusOf(pendingStatus.tx))}</strong> to{' '}
                   <strong>{prettyStatus(pendingStatus.next)}</strong>, bypassing the normal
-                  order lifecycle. This is an emergency override and cannot be undone automatically.
+                  fulfilment lifecycle. The order&rsquo;s payment status is not affected — it is a
+                  rollup of its payments. This is an emergency override and cannot be undone automatically.
                 </>
               )}
             </DialogContentText>

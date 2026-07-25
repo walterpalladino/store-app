@@ -123,6 +123,14 @@ describe('API config', () => {
     it('builds list URL', () => expect(API.orders.list).toBe('http://localhost:3000/api/orders'))
     it('builds byId URL', () => expect(API.orders.byId(5)).toBe('http://localhost:3000/api/orders/5'))
     it('has no create URL (orders are read-only)', () => expect(API.orders.create).toBeUndefined())
+    it('builds the nested payments URL', () => expect(API.orders.payments(5)).toBe('http://localhost:3000/api/orders/5/payments'))
+  })
+
+  // ── Payments (read-only, no list-all route) ────────────────────────────────
+  describe('payments endpoints', () => {
+    it('builds byId URL', () => expect(API.payments.byId(11)).toBe('http://localhost:3000/api/payments/11'))
+    it('has no list URL (a payment is reachable only via its order or its id)', () =>
+      expect(API.payments.list).toBeUndefined())
   })
 
   // ── Checkout ───────────────────────────────────────────────────────────────

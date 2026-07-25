@@ -125,6 +125,17 @@ const API = {
     // given status (POST { status }), an emergency override of the lifecycle.
     statusOptions: `${BASE}/api/orders/status`,
     setStatus:     (id) => `${BASE}/api/orders/${id}/status`,
+    // Payments belonging to one order (by the order's *numeric* id), oldest
+    // first. Payments live on their own resource — see `payments` below.
+    payments:      (id) => `${BASE}/api/orders/${id}/payments`,
+  },
+
+  // Payments — read-only, scoped to the caller through the owning order. There
+  // is **no list-all endpoint**: a payment is reachable either through its order
+  // (`orders.payments`) or directly by its own numeric id. Payments are created
+  // and settled by the checkout/refund flows, never over these routes.
+  payments: {
+    byId: (id) => `${BASE}/api/payments/${id}`,
   },
 
   // Checkout — registers an order from the caller's cart and starts a Stripe

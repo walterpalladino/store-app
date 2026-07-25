@@ -1,7 +1,10 @@
 import API from '../../config/api'
 import { useAuth } from '../../context/AuthContext'
 import { orderFromCents } from '../../utils/money'
-import { normalizeOrder } from '../../utils/orders'
+import {
+  normalizeOrder, orderStatusOf, paymentStatusOf, prettyStatus, statusStyle, shortOrderId,
+} from '../../utils/orders'
+import { fetchOrderPayments } from '../../services/paymentsService'
 import logger from '../../utils/logger'
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -37,6 +40,8 @@ const FALLBACK_TRANSACTIONS = [
     userId: 1,
     totalProducts: 4,
     totalQuantity: 12,
+    orderStatus: 'delivered',
+    paymentStatus: 'paid',
     payment: { cardExpire: '01/30', cardNumber: '3530633803003665', cardType: 'JCB', currency: 'USD' },
   },
 ]
@@ -53,43 +58,23 @@ function mockDate(id) {
   return base.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-const STATUS_STYLES = {
-  'delivered':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
-  'payment completed':  { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
-  'completed':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
-  'paid':               { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
-  'fulfilled':          { color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'     },
-  'shipped':            { color: '#5a8fa3', bg: 'rgba(90,143,163,0.12)'   },
-  'processing':         { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
-  'pending':            { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
-  'pending_payment':    { color: '#c8a96e', bg: 'rgba(200,169,110,0.12)'  },
-  'draft':              { color: '#6b6560', bg: 'rgba(107,101,96,0.1)'    },
-  'error':              { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
-  'payment_failed':     { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
-  'payment could not be processed': { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)' },
-  'cancelled':          { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
-  'refunded':           { color: '#b85c4a', bg: 'rgba(184,92,74,0.1)'     },
-}
-
-// "pending_payment" → "Pending Payment"
-const prettyStatus = (s) => String(s).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-
-// Public order id shown to users: the first segment of the UUID (#018f9a2c),
-// falling back to the padded numeric id for demo/legacy orders without one.
-const shortOrderId = (tx) =>
-  tx?.orderId ? `#${String(tx.orderId).split('-')[0]}` : `#${String(tx?.id).padStart(5, '0')}`
-
-function statusMeta(tx) {
-  if (tx.status) {
-    const key = String(tx.status).toLowerCase()
-    const style = STATUS_STYLES[key] ?? { color: '#6b6560', bg: 'rgba(107,101,96,0.1)' }
-    return { label: prettyStatus(tx.status), ...style }
+// An order carries two status axes — fulfilment (`orderStatus`) and money
+// (`paymentStatus`, rolled up from its payments). Both are shown; the money one
+// is omitted when the order doesn't report it (older/demo payloads).
+function statusChips(tx) {
+  const chips = []
+  const fulfilment = orderStatusOf(tx)
+  if (fulfilment) chips.push({ key: 'fulfilment', label: prettyStatus(fulfilment), ...statusStyle(fulfilment) })
+  else {
+    // Nothing to read at all (demo rows without a status) — derive from the id.
+    const seed = tx.id % 3
+    chips.push(seed === 0 ? { key: 'fulfilment', label: 'Processing', ...statusStyle('processing') }
+      : seed === 1 ? { key: 'fulfilment', label: 'Shipped', ...statusStyle('shipped') }
+        : { key: 'fulfilment', label: 'Delivered', ...statusStyle('delivered') })
   }
-  // Fallback derived from id when status field absent
-  const seed = tx.id % 3
-  if (seed === 0) return { label: 'Processing', color: '#c8a96e', bg: 'rgba(200,169,110,0.12)' }
-  if (seed === 1) return { label: 'Shipped',    color: '#5a8fa3', bg: 'rgba(90,143,163,0.12)'  }
-  return              { label: 'Delivered',   color: '#4a7c59', bg: 'rgba(74,124,89,0.1)'    }
+  const money = paymentStatusOf(tx)
+  if (money) chips.push({ key: 'payment', label: prettyStatus(money), ...statusStyle(money) })
+  return chips
 }
 
 // Read a { data, error } pair from a Response, never throwing.
@@ -190,7 +175,7 @@ function DetailSkeleton() {
 // Transaction list card
 // ---------------------------------------------------------------------------
 function TransactionCard({ tx, thumbnails = {}, onView }) {
-  const status   = statusMeta(tx)
+  const chips    = statusChips(tx)
   const products = Array.isArray(tx.products) ? tx.products : []
   const savings  = (tx.total ?? 0) - (tx.discountedTotal ?? 0)
 
@@ -239,11 +224,14 @@ function TransactionCard({ tx, thumbnails = {}, onView }) {
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Chip
-            label={status.label}
-            size="small"
-            sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.07em', bgcolor: status.bg, color: status.color, fontWeight: 500, borderRadius: 1 }}
-          />
+          {chips.map((c) => (
+            <Chip
+              key={c.key}
+              label={c.label}
+              size="small"
+              sx={{ height: 20, fontSize: '0.6rem', letterSpacing: '0.07em', bgcolor: c.bg, color: c.color, fontWeight: 500, borderRadius: 1 }}
+            />
+          ))}
           <Button
             size="small"
             onClick={() => onView(tx.id)}
@@ -323,6 +311,7 @@ function TransactionDetail({ txId, onBack }) {
   const { authFetch } = useAuth()
   const [tx, setTx]           = useState(null)
   const [thumbnails, setThumbnails] = useState({})
+  const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
   const [, setUsingFallback]  = useState(false)
@@ -351,12 +340,16 @@ function TransactionDetail({ txId, onBack }) {
     setTx(txData)
     setLoading(false)
 
+    // GET /api/orders/:id/payments 🔒 — settlement details left the order object
+    // and live on the Payments resource. Best-effort: an unavailable list just
+    // renders empty rather than failing the whole detail view.
+    setPayments(apiOrder ? await fetchOrderPayments(authFetch, txId).catch(() => []) : [])
     setThumbnails(await fetchThumbnails(txData.products))
   }, [txId, authFetch])
 
   useEffect(() => { load() }, [load])
 
-  const status  = tx ? statusMeta(tx) : null
+  const chips   = tx ? statusChips(tx) : []
   const savings = tx ? tx.total - tx.discountedTotal : 0
 
   return (
@@ -401,7 +394,11 @@ function TransactionDetail({ txId, onBack }) {
                     <Typography sx={{ fontSize: '0.7rem', color: 'rgba(245,240,232,0.45)', mt: 0.4 }}>Placed {mockDate(tx.id)}</Typography>
                   </Box>
                   <Box sx={{ textAlign: 'right' }}>
-                    <Chip label={status.label} size="small" sx={{ height: 22, fontSize: '0.62rem', letterSpacing: '0.08em', bgcolor: status.bg, color: status.color, fontWeight: 500, borderRadius: 1, mb: 1 }} />
+                    <Box sx={{ display: 'flex', gap: 0.75, justifyContent: 'flex-end', mb: 1 }}>
+                      {chips.map((c) => (
+                        <Chip key={c.key} label={c.label} size="small" sx={{ height: 22, fontSize: '0.62rem', letterSpacing: '0.08em', bgcolor: c.bg, color: c.color, fontWeight: 500, borderRadius: 1 }} />
+                      ))}
+                    </Box>
                     <Typography sx={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '1.8rem', fontWeight: 500, color: '#f5f0e8', lineHeight: 1 }}>
                       {fmt(tx.discountedTotal)}
                     </Typography>
@@ -430,32 +427,75 @@ function TransactionDetail({ txId, onBack }) {
                 ))}
               </Box>
 
-              {/* Payment row — card details (legacy shape) when present, else
-                  the provider/currency the current backend returns. */}
-              {tx.payment && (
+              {/* Card details — only the legacy/demo shape carries them; live
+                  settlement is shown by the Payments section below. */}
+              {tx.payment?.cardNumber && (
                 <Box sx={{ px: 3, py: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
                   <CreditCardOutlined sx={{ fontSize: 16, color: 'secondary.dark' }} />
-                  {tx.payment.cardNumber ? (
-                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                      Paid with{' '}
-                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>{tx.payment.cardType}</Box>
-                      {' '}ending in{' '}
-                      <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 500 }}>{String(tx.payment.cardNumber).slice(-4)}</Box>
-                      {' '}· Exp <Box component="span" sx={{ fontFamily: 'monospace' }}>{tx.payment.cardExpire}</Box>
-                      {' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box>
-                    </Typography>
-                  ) : (
-                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                      {tx.payment.provider && (
-                        <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, textTransform: 'capitalize' }}>{tx.payment.provider}</Box>
-                      )}
-                      {tx.payment.status && <>{' '}· {prettyStatus(tx.payment.status)}</>}
-                      {tx.payment.currency && <>{' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box></>}
-                    </Typography>
-                  )}
+                  <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                    Paid with{' '}
+                    <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>{tx.payment.cardType}</Box>
+                    {' '}ending in{' '}
+                    <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary', fontWeight: 500 }}>{String(tx.payment.cardNumber).slice(-4)}</Box>
+                    {' '}· Exp <Box component="span" sx={{ fontFamily: 'monospace' }}>{tx.payment.cardExpire}</Box>
+                    {' '}· <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tx.payment.currency}</Box>
+                  </Typography>
                 </Box>
               )}
             </Box>
+
+            {/* ── Payments ──────────────────────────────────────────────────
+                Settlement moved off the order onto its own resource: one row
+                per checkout attempt, each with its own status and refund. */}
+            {payments.length > 0 && (
+              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden', mb: 3 }}>
+                <Box sx={{ px: 3, py: 1.75, bgcolor: 'rgba(26,26,26,0.02)', borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CreditCardOutlined sx={{ fontSize: 15, color: 'secondary.dark' }} />
+                  <Typography variant="h6" sx={{ fontSize: '0.7rem' }}>Payments</Typography>
+                </Box>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        {['Payment', 'Status', 'Amount', 'Paid On', 'Refunded'].map((h) => (
+                          <TableCell key={h} sx={{ py: 1.25, px: { xs: 1.5, md: 2.5 }, fontSize: '0.62rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', fontWeight: 500, borderBottom: '1px solid', borderColor: 'divider', whiteSpace: 'nowrap' }}>
+                            {h}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {payments.map((p, idx) => {
+                        const st = statusStyle(p.status)
+                        return (
+                          <TableRow key={p.id} sx={{ '&:last-child td': { border: 0 }, bgcolor: idx % 2 === 0 ? 'transparent' : 'rgba(26,26,26,0.012)' }}>
+                            <TableCell sx={{ py: 1.5, px: { xs: 1.5, md: 2.5 } }}>
+                              <Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', fontWeight: 600 }}>#{p.id}</Typography>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.5, px: { xs: 1.5, md: 2.5 } }}>
+                              <Chip label={prettyStatus(p.status)} size="small" sx={{ height: 20, fontSize: '0.6rem', bgcolor: st.bg, color: st.color, fontWeight: 500, borderRadius: 1 }} />
+                            </TableCell>
+                            <TableCell sx={{ py: 1.5, px: { xs: 1.5, md: 2.5 }, whiteSpace: 'nowrap' }}>
+                              <Typography sx={{ fontSize: '0.82rem' }}>{fmt(p.amount)}</Typography>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.5, px: { xs: 1.5, md: 2.5 }, whiteSpace: 'nowrap' }}>
+                              <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+                                {p.paidOn ? new Date(p.paidOn).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.5, px: { xs: 1.5, md: 2.5 }, whiteSpace: 'nowrap' }}>
+                              <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+                                {p.amountRefunded > 0 ? fmt(p.amountRefunded) : '—'}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            )}
 
             {/* ── Line items table ── */}
             <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>

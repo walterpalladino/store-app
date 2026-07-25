@@ -2,20 +2,24 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams, Navigate } from 'react-router-dom'
 import { Box, Container, Typography, CircularProgress } from '@mui/material'
 import { useAuth } from '../context/AuthContext'
-import { isSuccess, getOrderBySession } from '../services/checkoutService'
+import { getOrderBySession } from '../services/checkoutService'
+import { fetchOrderPayments } from '../services/paymentsService'
+import { isOrderPaid } from '../utils/orders'
 import OrderResult from '../components/OrderResult'
 
 // Map the checkout order (created by POST /api/checkout) into the shape
 // OrderResult renders. The order's line items use the cart-snapshot shape
-// ({ sku, description, unitPrice, discountPrice, qty }).
-function toResult(order, statusLabel) {
+// ({ sku, description, unitPrice, discountPrice, qty }). Settlement details are
+// no longer on the order — `payment` is the order's latest payment, read from
+// the separate Payments resource (legacy payloads still carry `order.payment`).
+function toResult(order, statusLabel, payment) {
   return {
     id:              order?.id,
     orderId:         order?.orderId,
     status:          statusLabel,
     discountedTotal: order?.discountedTotal ?? order?.total,
     address:         order?.address,
-    payment:         order?.payment,
+    payment:         payment ?? order?.payment,
     products: (order?.products || []).map((p) => ({
       sku:             p.sku,
       title:           p.description ?? p.title,
@@ -42,12 +46,22 @@ export default function PaymentReturnPage() {
   const sessionId = params.get('session_id')
 
   const [order, setOrder]     = useState(null)
+  const [payment, setPayment] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let alive = true
     getOrderBySession(authFetch, sessionId)
-      .then((o) => { if (alive) setOrder(o) })
+      .then(async (o) => {
+        if (!alive) return
+        setOrder(o)
+        // Settlement details live on the Payments resource now — pull the
+        // order's latest payment for the confirmation card. Best-effort: a
+        // failure here just leaves the payment box empty.
+        if (!o?.id) return
+        const payments = await fetchOrderPayments(authFetch, o.id).catch(() => [])
+        if (alive) setPayment(payments[payments.length - 1] ?? null)   // oldest first
+      })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [authFetch, sessionId])
@@ -55,10 +69,11 @@ export default function PaymentReturnPage() {
   // Direct navigation with no session and nothing to show → back to the cart.
   if (!sessionId && !loading && !order) return <Navigate to="/cart" replace />
 
-  // Arriving here is a success; the webhook may not have flipped the order to
-  // `paid` yet, so show "Payment Completed" once settled, else "Processing".
-  const label = order && isSuccess(order.status) ? 'Payment Completed' : 'Processing'
-  const result = toResult(order, label)
+  // Arriving here is a success; the webhook may not have settled the payment
+  // yet, so show "Payment Completed" once the order's money axis reports `paid`,
+  // else "Processing".
+  const label = isOrderPaid(order) ? 'Payment Completed' : 'Processing'
+  const result = toResult(order, label, payment)
 
   return (
     <Box sx={{ bgcolor: 'background.default', minHeight: '100vh' }}>

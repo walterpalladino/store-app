@@ -82,6 +82,21 @@ export function orderFromCents(order) {
   }
 }
 
+/**
+ * Normalise a payment from the API: `amount` / `amountRefunded` cents → units.
+ * Payments are their own resource (see the "Payments" section of
+ * API_CONTRACT.md) — settlement state that used to hang off the order object
+ * (`paidOn`, `amountRefunded`, `refundStatus`) now lives here.
+ */
+export function paymentFromCents(payment) {
+  if (!payment || typeof payment !== 'object') return payment
+  return {
+    ...payment,
+    amount: conv(payment.amount),
+    amountRefunded: conv(payment.amountRefunded),
+  }
+}
+
 /** Normalise a checkout session from the API: `amountTotal` cents → units. */
 export function checkoutFromCents(checkout) {
   if (!checkout || typeof checkout !== 'object') return checkout

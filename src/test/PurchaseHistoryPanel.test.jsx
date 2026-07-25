@@ -11,7 +11,8 @@ vi.mock('../context/AuthContext', () => ({
 }))
 
 // Current backend order shape (see API_CONTRACT.md): sku-only line items with
-// description/unitPrice/discountPrice/qty, snake_case status, no card details.
+// description/unitPrice/discountPrice/qty, two status axes, and no payment
+// details at all — settlement lives on the separate Payments resource.
 const NEW_ORDER = {
   id: 9,
   userId: 1,
@@ -24,10 +25,15 @@ const NEW_ORDER = {
   discountedTotal: 11649,
   totalProducts: 2,
   totalQuantity: 2,
-  status: 'pending_payment',
+  orderStatus: 'pending',
+  paymentStatus: 'unpaid',
   address: {},
-  payment: { provider: 'stripe', sessionId: 'cs_test_x', status: 'open', amountTotal: 11649, currency: 'usd' },
 }
+
+// GET /api/orders/9/payments — one pending checkout attempt (money in cents).
+const PAYMENTS = [
+  { id: 11, orderId: 'b562e3ae-792f-11f1-9844-97b9d913d5f0', status: 'pending', amount: 11649, currency: 'usd', paidOn: null, amountRefunded: 0, refundStatus: 'none', refundedOn: null },
+]
 
 beforeEach(() => {
   authFetch.mockReset()
@@ -41,9 +47,10 @@ describe('PurchaseHistoryPanel — current API order shape', () => {
   it('renders the order list without crashing and maps the new fields', async () => {
     renderWithProviders(<PurchaseHistoryPanel />)
 
-    // Order number + prettified snake_case status render (would crash before the fix).
+    // Order number renders, plus a chip for each status axis.
     expect(await screen.findByText('#00009')).toBeInTheDocument()
-    expect(screen.getByText(/Pending Payment/i)).toBeInTheDocument()
+    expect(screen.getByText('Pending')).toBeInTheDocument()   // orderStatus
+    expect(screen.getByText('Unpaid')).toBeInTheDocument()    // paymentStatus
     expect(screen.getByText(/2 products · 2 units/)).toBeInTheDocument()
 
     // Orders were requested with the authenticated fetch, not a bare fetch.
@@ -51,10 +58,13 @@ describe('PurchaseHistoryPanel — current API order shape', () => {
   })
 
   it('opens the detail view with remapped line items (no NaN, no card fields)', async () => {
-    // List → { orders: [...] }; detail (…/orders/9) → the single order.
+    // List → { orders: [...] }; payments (…/orders/9/payments) → { payments };
+    // detail (…/orders/9) → the single order.
     authFetch.mockImplementation((url) =>
       Promise.resolve(mockJsonResponse(okEnvelope(
-        /\/orders\/\d+/.test(url) ? NEW_ORDER : { orders: [NEW_ORDER] },
+        /\/orders\/\d+\/payments$/.test(url) ? { payments: PAYMENTS }
+          : /\/orders\/\d+/.test(url) ? NEW_ORDER
+            : { orders: [NEW_ORDER] },
       ))),
     )
     renderWithProviders(<PurchaseHistoryPanel />)
@@ -64,8 +74,10 @@ describe('PurchaseHistoryPanel — current API order shape', () => {
     // description → title, unitPrice → price
     expect(await screen.findByText('Red Nail Polish')).toBeInTheDocument()
     expect(screen.getByText('BEA-NAI-NAI-005')).toBeInTheDocument()
-    // New payment shape shows provider, not undefined card digits.
-    expect(screen.getByText(/stripe/i)).toBeInTheDocument()
+    // Settlement comes from the Payments resource, not from the order object.
+    expect(await screen.findByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('#11')).toBeInTheDocument()
+    expect(authFetch).toHaveBeenCalledWith(expect.stringContaining('/api/orders/9/payments'))
     await waitFor(() => expect(document.body.textContent).not.toMatch(/NaN/))
   })
 })

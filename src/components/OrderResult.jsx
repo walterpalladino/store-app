@@ -4,6 +4,7 @@ import {
   CheckCircleOutline, ErrorOutline, LocalShippingOutlined,
   HomeOutlined, CreditCardOutlined, ShoppingBagOutlined,
 } from '@mui/icons-material'
+import { prettyStatus } from '../utils/orders'
 
 const fmt = (n) =>
   Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
@@ -116,10 +117,21 @@ export default function OrderResult({ result, onBack, onContinueShopping }) {
                 </Box>
                 {result.payment ? (
                   <>
-                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 500 }}>{result.payment.cardType || result.payment.method || 'Card'}</Typography>
-                    {result.payment.cardNumber && (
+                    {/* Card details are the legacy/demo shape; a payment from the
+                        Payments resource carries a status + captured amount. */}
+                    <Typography sx={{ fontSize: '0.82rem', fontWeight: 500 }}>
+                      {result.payment.cardType || result.payment.method || prettyStatus(result.payment.status) || 'Card'}
+                    </Typography>
+                    {result.payment.cardNumber ? (
                       <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary', fontFamily: 'monospace' }}>{maskCard(result.payment.cardNumber)}</Typography>
-                    )}
+                    ) : result.payment.amount != null ? (
+                      <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+                        {fmt(result.payment.amount)}
+                        {result.payment.currency && (
+                          <Box component="span" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', ml: 0.5 }}>{result.payment.currency}</Box>
+                        )}
+                      </Typography>
+                    ) : null}
                   </>
                 ) : <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>—</Typography>}
               </Box>

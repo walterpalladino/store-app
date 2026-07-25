@@ -142,7 +142,9 @@ invalid token returns **401**.
 | Orders   | GET    | `/api/orders/search`                   | 🔒   |
 | Orders   | GET    | `/api/orders/status`                   | 🔒 ADMIN |
 | Orders   | GET    | `/api/orders/:id`                      | 🔒   |
+| Orders   | GET    | `/api/orders/:id/payments`             | 🔒   |
 | Orders   | POST   | `/api/orders/:id/status`               | 🔒 ADMIN |
+| Payments | GET    | `/api/payments/:id`                    | 🔒   |
 | Checkout | POST   | `/api/checkout`                        | 🔒   |
 | Checkout | POST   | `/api/checkout/webhook`                | —    |
 | Refunds  | POST   | `/api/refund`                          | 🔒 ADMIN |
@@ -1274,10 +1276,21 @@ scoped to the caller. Orders are **created by the checkout flow**
 (`POST /api/checkout`), never from an order request body. This is what fixes the
 front end generating duplicate orders.
 
-**Status lifecycle** (`status`): `draft` → `pending_payment` → `paid` →
-`fulfilled`, with `payment_failed`, `cancelled` and `refunded` as terminal
-branches. A user may have only **one open order** (`draft` or `pending_payment`) at
-a time.
+**Status is split into two independent axes:**
+
+- **`orderStatus`** — the fulfilment lifecycle: `pending` → `confirmed` →
+  `processing` → `shipped` → `delivered`, with `cancelled` as a terminal branch.
+  An order starts `pending` and is advanced to `confirmed` automatically on its
+  first successful payment; the remaining transitions are driven by the
+  seller/admin (see `POST /api/orders/:id/status`).
+- **`paymentStatus`** — the money lifecycle, **rolled up from the order's
+  payments**: `unpaid` → `partially_paid` → `paid`, plus `refunded` /
+  `partially_refunded` once money is returned, and `cancelled`.
+
+A user may have only **one open order** at a time — an order still awaiting
+payment (`paymentStatus` `unpaid` / `partially_paid`) that has not been
+cancelled. All payment-processor state lives on the separate
+[Payments](#payments-) resource, not on the order.
 
 The **order object**:
 
@@ -1293,34 +1306,28 @@ The **order object**:
   "discountedTotal": 2400,
   "totalProducts": 1,
   "totalQuantity": 3,
-  "status": "pending_payment",
+  "orderStatus": "pending",
+  "paymentStatus": "unpaid",
   "currency": "usd",
-  "address": {},
-  "payment": { "provider": "stripe", "sessionId": "cs_test_…", "status": "open", "amountTotal": 2400, "currency": "usd" },
-  "paidOn": null,
-  "amountRefunded": 0,
-  "refundStatus": "none",
-  "refundedOn": null
+  "address": {}
 }
 ```
 
 `total` is the gross item total (Σ `unitPrice` × `qty`); `discountedTotal` is the
-net payable (gross − discounts). All amounts are integer cents; `amountTotal` in
-the payment summary equals `discountedTotal` (Stripe's smallest-unit amount).
+net payable (gross − discounts). All amounts are integer cents.
 
 - `id` — the internal numeric primary key (used in `/api/orders/:id` paths).
 - `orderId` — the **public, time-sortable UUID v7** identifier. This is the id
   shown in emails and sent to Stripe (in `metadata.orderId`); the payment and
   refund webhooks look the order up by it.
+- `orderStatus` / `paymentStatus` — the two axes described above.
 - `currency` — ISO 4217 currency the order is priced/charged in (the system
   currency, from the `CURRENCY` env var; defaults to `usd`).
-- `paidOn` — timestamp set when Stripe confirms the payment; `null` until then.
-- `amountRefunded` (cents), `refundStatus` (`none` → `pending` → `refunded`/`failed`)
-  and `refundedOn` track a refund (see [Refunds](#refunds--admin)); new orders
-  return `0` / `"none"` / `null`.
 
-The Stripe identifiers `paymentId`, `paymentIntent`, `sessionId` and `refundId`
-are stored server-side only and are **never** returned by the API.
+Payment settlement details (`paidOn`, `amountRefunded`, refund state) and the
+Stripe identifiers (`paymentIntent`, `sessionId`, `refundId`) are **not** on the
+order — read them via the [Payments](#payments-) resource, and the processor
+identifiers are never returned by the API at all.
 
 ### GET `/api/orders` 🔒
 
@@ -1366,7 +1373,7 @@ curl http://localhost:3000/api/orders/5 -H "Authorization: Bearer <token>"
 
 ### GET `/api/orders/status` 🔒 ADMIN
 
-List every possible order status. Admin only.
+List every possible **fulfilment** status (`orderStatus`). Admin only.
 
 ```bash
 curl http://localhost:3000/api/orders/status -H "Authorization: Bearer <adminToken>"
@@ -1378,7 +1385,7 @@ curl http://localhost:3000/api/orders/status -H "Authorization: Bearer <adminTok
 {
   "success": true,
   "data": {
-    "statuses": ["draft", "pending_payment", "paid", "payment_failed", "cancelled", "fulfilled", "refunded"]
+    "statuses": ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"]
   }
 }
 ```
@@ -1389,8 +1396,10 @@ curl http://localhost:3000/api/orders/status -H "Authorization: Bearer <adminTok
 
 ### POST `/api/orders/:id/status` 🔒 ADMIN
 
-**Emergency override** — force an order to a given status, bypassing the normal
-lifecycle. Admin only; works on **any** order (not scoped to an owner).
+**Emergency override** — force an order's **fulfilment** status (`orderStatus`)
+to a given value, bypassing the normal lifecycle. Admin only; works on **any**
+order (not scoped to an owner). The money axis (`paymentStatus`) is not touched
+here — it is a rollup of the order's payments.
 
 **Body (required):** `status` — one of the values from `GET /api/orders/status`.
 
@@ -1407,6 +1416,72 @@ curl -X POST http://localhost:3000/api/orders/5/status \
 
 ---
 
+## Payments 🔒
+
+Payments are a **read-only** resource scoped to the caller: each payment is
+visible only through the order it belongs to, and only if that order is the
+caller's (otherwise `404`, exactly like orders). Payments are **created and
+settled by the checkout and refund flows**, never over these routes. An order has
+one payment per checkout attempt (the model supports several per order); the
+order's `paymentStatus` is a rollup of them.
+
+The **payment object**:
+
+```json
+{
+  "id": 11,
+  "orderId": "018f9a2c-7b3e-7c21-9e2a-3f1b6d4e5a90",
+  "status": "paid",
+  "amount": 2400,
+  "currency": "usd",
+  "paidOn": "2026-07-05T10:00:00.000Z",
+  "amountRefunded": 0,
+  "refundStatus": "none",
+  "refundedOn": null,
+  "createdAt": "2026-07-05T09:58:00.000Z",
+  "updatedAt": "2026-07-05T10:00:00.000Z"
+}
+```
+
+- `id` — the payment's numeric id (used in `/api/payments/:id`).
+- `orderId` — the owning order's **public UUID**.
+- `status` — the payment lifecycle: `pending` → `paid` / `payment_failed`, then
+  `refunded` / `partially_refunded`, or `cancelled`.
+- `amount` — the captured amount, integer cents.
+- `refundStatus` — the payment's own refund lifecycle (`none` → `pending` →
+  `refunded` / `failed`); `amountRefunded` (cents) and `refundedOn` track it.
+
+The processor identifiers (`sessionId`, `paymentIntent`, `refundId`) and the raw
+processor snapshot are stored server-side only and are **never** returned.
+
+### GET `/api/orders/:id/payments` 🔒
+
+List the payments for one of the caller's orders (by the order's numeric `id`),
+oldest first. An order belonging to another user returns `404`.
+
+```bash
+curl http://localhost:3000/api/orders/5/payments -H "Authorization: Bearer <token>"
+```
+
+**200** → `{ success, data: { payments: [ … ] } }`
+**404** — no such order (or not yours)
+
+---
+
+### GET `/api/payments/:id` 🔒
+
+Get one of the caller's payments by its numeric id. A payment whose order isn't
+the caller's returns `404`.
+
+```bash
+curl http://localhost:3000/api/payments/11 -H "Authorization: Bearer <token>"
+```
+
+**200** → success envelope wrapping a single payment object.
+**404** — not found (or not yours)
+
+---
+
 ## Checkout 🔒
 
 Placing an order is a **separate operation** from the orders resource. Checkout
@@ -1416,12 +1491,12 @@ carries only the front-end **callback URLs** Stripe redirects to.
 ### POST `/api/checkout` 🔒
 
 Register an order from the caller's cart and start payment. The flow: register the
-order as `draft` from the cart snapshot → create a Stripe **hosted** Checkout
-Session → clear the cart and move the order to `pending_payment`. If the
-payment processor fails to start a session, the draft order is deleted (so it does
-not linger as an open order) and the error is surfaced. The response carries both
-the order and the checkout session; the front end **redirects the browser to
-`checkout.url`** to collect payment.
+order directly as `pending` / `unpaid` from the cart snapshot → create a Stripe
+**hosted** Checkout Session → record a `pending` payment (carrying the session id)
+and clear the cart. If the payment processor fails to start a session, the order
+is deleted (so it does not linger as an open order) and the error is surfaced. The
+response carries both the order and the checkout session; the front end
+**redirects the browser to `checkout.url`** to collect payment.
 Full flow and payment-platform details: [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
 **Body (required):** `successUrl`, `cancelUrl` — where Stripe sends the customer
@@ -1441,7 +1516,7 @@ curl -X POST http://localhost:3000/api/checkout \
 {
   "success": true,
   "data": {
-    "order": { "id": 5, "status": "pending_payment", "total": 3000, "discountedTotal": 2400, "…": "…" },
+    "order": { "id": 5, "orderStatus": "pending", "paymentStatus": "unpaid", "total": 3000, "discountedTotal": 2400, "…": "…" },
     "checkout": {
       "provider": "stripe",
       "sessionId": "cs_test_…",
@@ -1457,7 +1532,7 @@ curl -X POST http://localhost:3000/api/checkout \
 ```
 
 **401** — missing/invalid token
-**409** — you already have an open order (`draft` / `pending_payment`)
+**409** — you already have an open order (one still awaiting payment)
 **422** — missing `successUrl`/`cancelUrl`, or your cart is empty (nothing to order)
 
 > **Real or mock Stripe.** When `STRIPE_SECRET_KEY` is set the session is created
@@ -1471,22 +1546,21 @@ curl -X POST http://localhost:3000/api/checkout \
 of a checkout session. The request is verified by **signature** (the raw body is
 checked against the `stripe-signature` header using `STRIPE_WEBHOOK_SECRET`), and
 the order's **public UUID** (`orderId`) is read from the session's
-`metadata.orderId` — the order is looked up by it. Stripe events map to order
-transitions as:
+`metadata.orderId`. Stripe events settle the matching **payment** as:
 
-| Stripe event | order transitions to | side effect |
+| Stripe event | payment settles to | side effect |
 | --- | --- | --- |
-| `checkout.session.completed` / `async_payment_succeeded` | `paid` | records `paidOn`, captures `paymentIntent` |
-| `checkout.session.async_payment_failed` / `expired` | `payment_failed` | — |
+| `checkout.session.completed` / `async_payment_succeeded` | `paid` | records `paidOn`, captures `paymentIntent`; order's `paymentStatus` rolls up (and a `pending` order → `confirmed`) |
+| `checkout.session.async_payment_failed` / `expired` | `payment_failed` | order's `paymentStatus` rolls up |
 | *(any other event)* | unchanged | acknowledged and ignored |
 
-The event is matched to the order by **both** its order id *and* its checkout
-session id: the session id in the event must equal the one captured on the order
-at checkout. A mismatched (or missing) session id is rejected with **409** and
-the order is left unchanged — an event for a different or stale session can never
-settle it. Only an order currently in `pending_payment` can be settled.
-Re-delivering the same event (order already in the target status) is a no-op and
-still returns **200**, so Stripe's retries don't error.
+The event is matched by **both** its order id *and* its checkout session id: the
+session id in the event must resolve to a payment belonging to that order. A
+mismatched (or missing) session id is rejected with **409** and nothing is
+settled — an event for a different or stale session can never settle it. Only a
+payment currently `pending` can be settled. Re-delivering the same event (payment
+already in the target status) is a no-op and still returns **200**, so Stripe's
+retries don't error.
 
 ```bash
 # Real Stripe: send a signed event (use the Stripe CLI to forward + sign)
@@ -1501,14 +1575,14 @@ stripe trigger checkout.session.completed
 ```
 
 **404** — no order for the event's `orderId`
-**409** — the order is not awaiting payment (not in `pending_payment`)
+**409** — no matching payment for the session id, or the payment is not awaiting settlement
 **422** — signature verification failed / unsupported event
 
 > **Mock mode** (`STRIPE_SECRET_KEY` unset) — the mock processor skips signature
 > verification and accepts a plain JSON body `{ "orderId": "018f9a2c-…"
 > (the order UUID), "sessionId": "cs_test_…", "status": "payment_succeeded" |
 > "payment_failed" }`, which is how the test suite drives the webhook. `sessionId`
-> must match the order's stored session id. Full details:
+> must resolve to a payment on the order. Full details:
 > [`docs/ORDER_PROCESSING.md`](docs/ORDER_PROCESSING.md).
 
 ---
@@ -1516,11 +1590,12 @@ stripe trigger checkout.session.completed
 ## Refunds 🔒 ADMIN
 
 Refunding a **paid** order is an **admin-only** operation, separate from the
-orders resource. Starting a refund hands off to Stripe and moves the order's
-`refundStatus` to `pending`; the refund settles asynchronously via a webhook,
-which updates `amountRefunded` / `refundedOn`, sets `refundStatus` to `refunded`,
-and moves the order to `refunded`. (Refund fields on the order object are
-described under [Orders](#orders-).)
+orders resource. A refund acts on the order's settled **payment** (see
+[Payments](#payments-)). Starting a refund hands off to Stripe and moves that
+payment's `refundStatus` to `pending`; the refund settles asynchronously via a
+webhook, which records `amountRefunded` / `refundedOn` on the payment, marks it
+`refunded` / `partially_refunded`, and rolls the order's `paymentStatus` up
+accordingly. The order's fulfilment `orderStatus` is **not** changed by a refund.
 
 ### POST `/api/refund` 🔒 ADMIN
 
@@ -1543,7 +1618,7 @@ boundary and settles the refund via the webhook).
 {
   "success": true,
   "data": {
-    "order": { "id": 5, "status": "paid", "refundStatus": "pending", "…": "…" },
+    "order": { "id": 5, "orderStatus": "confirmed", "paymentStatus": "paid", "…": "…" },
     "refund": { "provider": "stripe", "refundId": "re_…", "status": "pending", "amount": 2400, "currency": "usd" }
   }
 }
@@ -1551,22 +1626,22 @@ boundary and settles the refund via the webhook).
 
 **401** — missing/invalid token · **403** — not an ADMIN
 **404** — no such order
-**409** — the order is not `paid`, or a refund is already `pending`/`refunded`/`failed`
+**409** — the order's `paymentStatus` is not `paid`, it has no settled payment, or a refund is already `pending`/`refunded`/`failed`
 
 ### POST `/api/refund/webhook`
 
 **Public** (no token) — the payment processor calls this server-to-server to
 report the refund outcome; verified by **signature** like the checkout webhook.
-The event is matched to the order by **both** its order id *and* its refund id
-(which must equal the one captured when the refund started). Refund events map as:
+The event is matched by **both** the order id *and* the refund id (which must
+resolve to a payment on that order). Refund events map as:
 
-| Stripe event (refund status) | order refund settles to | side effect |
+| Stripe event (refund status) | payment refund settles to | side effect |
 | --- | --- | --- |
-| refund `succeeded` | `refunded` | records `amountRefunded` / `refundedOn`, order → `refunded` |
-| refund `failed` / `canceled` | `failed` | order stays `paid` |
+| refund `succeeded` | `refunded` | records `amountRefunded` / `refundedOn`, payment → `refunded` / `partially_refunded`; order's `paymentStatus` rolls up |
+| refund `failed` / `canceled` | `failed` | payment stays `paid` (capture intact) |
 | *(still pending / other)* | unchanged | acknowledged and ignored |
 
-Only an order with a `pending` refund can be settled. Re-delivery is idempotent
+Only a payment with a `pending` refund can be settled. Re-delivery is idempotent
 (**200**). A mismatched/unknown refund id → **409**; unknown order → **404**.
 
 **200** — receipt acknowledgement only:

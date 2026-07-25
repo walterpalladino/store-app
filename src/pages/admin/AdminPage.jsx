@@ -10,7 +10,7 @@ import {
   StorefrontOutlined, InventoryOutlined, PointOfSaleOutlined,
   LogoutRounded, ChevronRight, MenuRounded, Close,
   HomeOutlined, KeyRounded, KeyboardArrowDownRounded, CategoryOutlined,
-  SellOutlined,
+  SellOutlined, AccountBalanceWalletOutlined,
 } from '@mui/icons-material'
 import { useMerchantAuth } from '../../context/MerchantAuthContext'
 import MerchantSettings from './MerchantSettings'
@@ -18,6 +18,7 @@ import AdminProducts   from './AdminProducts'
 import AdminCategories from './AdminCategories'
 import AdminTags       from './AdminTags'
 import AdminSells      from './AdminSells'
+import AdminPayments   from './AdminPayments'
 
 // ---------------------------------------------------------------------------
 // Nav config
@@ -52,6 +53,12 @@ const NAV_ITEMS = [
     label:     'Sales',
     icon:      <PointOfSaleOutlined sx={{ fontSize: 19 }} />,
     component: AdminSells,
+  },
+  {
+    id:        'payments',
+    label:     'Payments',
+    icon:      <AccountBalanceWalletOutlined sx={{ fontSize: 19 }} />,
+    component: AdminPayments,
   },
 ]
 
@@ -233,6 +240,9 @@ export default function AdminPage() {
 
   const activeId = searchParams.get('tab') || 'settings'
   const setActiveId = (id) => {
+    // Only `tab` survives a sidebar click — panel-specific params (e.g. the
+    // Payments panel's `orderId` filter) are deliberately dropped so picking a
+    // section from the nav always lands on its unfiltered view.
     setSearchParams({ tab: id }, { replace: true })
     setMobileOpen(false)
   }
